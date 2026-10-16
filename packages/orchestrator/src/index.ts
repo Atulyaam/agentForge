@@ -571,3 +571,7 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
 export function cancelRun(ctx: RunContext): void {
   ctx.cancelled = true;
 }
+
+// ── Packaging & Submission Validator (Workstream 2) ───────────────────────────
+
+export * from './packaging.js';

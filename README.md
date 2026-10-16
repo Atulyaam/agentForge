@@ -83,6 +83,7 @@ apps/
 | `pnpm agentforge eval --baseline` | Compare agent output against deterministic heuristic baseline |
 | `pnpm agentforge diff <runA> <runB>` | Compare outputs, metrics, and regressions between two runs |
 | `pnpm agentforge drill [1\|2\|all]` | Run S6 mock challenge drills (Triage & RAG Q&A with Abstention) |
+| `pnpm agentforge package` | Package & validate submission deliverables (Code ZIP, output, transcript) |
 | `pnpm agentforge interview-pack` | Generate 5-minute interview script and audit answers |
 | `pnpm agentforge validate` | Validate output against adapter output schema |
 | `pnpm agentforge report <runId>` | Generate a markdown report for a run |

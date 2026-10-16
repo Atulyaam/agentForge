@@ -15,7 +15,7 @@ import * as crypto from 'node:crypto';
 import { AgentForgeError, generateRunId } from '@agentforge/shared';
 import { loadConfig } from '@agentforge/schemas';
 import { LLMAdapter, MockLLMProvider } from '@agentforge/llm';
-import { executeRun } from '@agentforge/orchestrator';
+import { executeRun, SubmissionPackager } from '@agentforge/orchestrator';
 import {
   generateReport,
   renderReportMarkdown,
@@ -103,11 +103,21 @@ Commands:
   eval           Run evaluation harness
   diff           Compare two runs (FR-040)
   drill          Run S6 mock challenge drills (drill 1, drill 2, drill all)
+  package        Package and validate submission deliverables (Code ZIP, output, transcript)
   validate       Validate output against schema
   report         Generate a run report
   preflight      Run pre-submit checklist
   interview-pack Generate interview readiness pack (FR-039)
   transcript     Manage AI transcript vault
+
+Options for 'package':
+  --dry-run             Inspect and validate without writing archive
+  --output <path>       Path to output artifact (default: runs/drill-1-triage/output.json)
+  --transcript <path>   Path to AI transcript (default: docs/ai-transcript/INDEX.md)
+  --archive <path>      Destination ZIP path (default: dist/submission.zip)
+  --max-file-mb <N>     Maximum artifact file size in MB (default: 50)
+  --max-archive-mb <N>  Maximum archive file size in MB (default: 100)
+  --include-datasets    Include challenge raw dataset fixtures in code archive
 
 Options for 'run':
   --input <path>     Input file path (required)
@@ -679,6 +689,79 @@ async function commandDrill(args: Map<string, string>): Promise<number> {
   return 0;
 }
 
+// ─── Command: package ─────────────────────────────────────────────────────────
+
+async function commandPackage(args: Map<string, string>): Promise<number> {
+  const rootDir = process.cwd();
+  const outputFile = args.get('output') ?? 'runs/drill-1-triage/output.json';
+  const transcriptFile = args.get('transcript') ?? 'docs/ai-transcript/INDEX.md';
+  const archiveOutPath = args.get('archive') ?? path.join(rootDir, 'dist', 'submission.zip');
+  const dryRun = args.has('dry-run');
+  const excludeDatasets = !args.has('include-datasets');
+  const maxFileSizeMb = Number(args.get('max-file-mb') ?? '50');
+  const maxArchiveSizeMb = Number(args.get('max-archive-mb') ?? '100');
+
+  console.log('\n📦 AgentForge Submission Packaging Validator');
+  console.log(`   Mode:             ${dryRun ? 'DRY-RUN (Inspection only)' : 'PACKAGE & ARCHIVE'}`);
+  console.log(`   Output File:      ${outputFile}`);
+  console.log(`   Transcript File:  ${transcriptFile}`);
+  console.log(`   Target ZIP:       ${archiveOutPath}`);
+  console.log(`   Size Limits:      Artifact <= ${maxFileSizeMb}MB, Archive <= ${maxArchiveSizeMb}MB\n`);
+
+  const packager = new SubmissionPackager(rootDir, maxFileSizeMb, maxArchiveSizeMb);
+  const manifest = await packager.packageSubmission({
+    outputFile,
+    transcriptFile,
+    archiveOutPath,
+    dryRun,
+    excludeDatasets,
+  });
+
+  // Display findings
+  console.log('─── Deliverables Validation ──────────────────────────────');
+  console.log(`  Code Archive:   ${manifest.artifacts.codeArchive.validSize ? '✅' : '❌'} ${manifest.artifacts.codeArchive.name} (${manifest.artifacts.codeArchive.sizeMb} MB)`);
+  console.log(`  Output File:    ${manifest.artifacts.outputFile.validContent && manifest.artifacts.outputFile.validSize ? '✅' : '❌'} ${path.basename(outputFile)} (${manifest.artifacts.outputFile.sizeMb} MB)`);
+  console.log(`  AI Transcript:  ${manifest.artifacts.transcriptFile.validContent && manifest.artifacts.transcriptFile.validSize ? '✅' : '❌'} ${path.basename(transcriptFile)} (${manifest.artifacts.transcriptFile.sizeMb} MB)`);
+
+  console.log('\n─── Archive Content Summary ──────────────────────────────');
+  console.log(`  Included Files: ${manifest.archiveDetails.includedFilesCount} files (${(manifest.archiveDetails.totalUncompressedBytes / (1024 * 1024)).toFixed(2)} MB uncompressed)`);
+  console.log(`  Excluded Roots: ${manifest.archiveDetails.excludedPaths.length} paths matching exclusion rules`);
+
+  console.log('\n─── Security & Secret Scan ───────────────────────────────');
+  console.log(`  Files Scanned:  ${manifest.secretScan.scannedFilesCount}`);
+  if (manifest.secretScan.passed) {
+    console.log(`  Secret Scan:    ✅ PASSED (0 secret patterns detected)`);
+  } else {
+    console.log(`  Secret Scan:    ❌ FAILED (${manifest.secretScan.violations.length} violations found)`);
+    for (const v of manifest.secretScan.violations) {
+      console.log(`    - ${v.file}:${v.line} [${v.pattern}]`);
+    }
+  }
+
+  // Save manifest to runs/packaging-manifest.json
+  const runsDir = path.join(rootDir, 'runs');
+  if (!fs.existsSync(runsDir)) {
+    fs.mkdirSync(runsDir, { recursive: true });
+  }
+  const manifestPath = path.join(runsDir, 'packaging-manifest.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+  console.log(`\n📋 Packaging Manifest saved to: ${manifestPath}`);
+
+  if (manifest.safeToPackage) {
+    console.log(`\n✅ Submission packaging validation PASSED!`);
+    if (!dryRun) {
+      console.log(`   Generated archive: ${archiveOutPath}`);
+    }
+    return 0;
+  } else {
+    console.error(`\n❌ Submission packaging validation FAILED:`);
+    for (const err of manifest.validationErrors) {
+      console.error(`   - ${err}`);
+    }
+    return 1;
+  }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -707,6 +790,9 @@ async function main(): Promise<void> {
         break;
       case 'drill':
         exitCode = await commandDrill(parsedArgs);
+        break;
+      case 'package':
+        exitCode = await commandPackage(parsedArgs);
         break;
       case 'interview-pack':
         exitCode = await commandInterviewPack(parsedArgs);
