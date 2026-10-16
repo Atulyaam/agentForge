@@ -1,0 +1,21 @@
+{
+  "name": "@agentforge/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "agentforge": "src/index.ts"
+  },
+  "scripts": { "build": "tsc", "test": "vitest run" },
+  "dependencies": {
+    "@agentforge/shared": "workspace:*",
+    "@agentforge/schemas": "workspace:*",
+    "@agentforge/llm": "workspace:*",
+    "@agentforge/policies": "workspace:*",
+    "@agentforge/orchestrator": "workspace:*",
+    "@agentforge/adapter-kit": "workspace:*",
+    "@agentforge/evaluation": "workspace:*"
+  }
+}

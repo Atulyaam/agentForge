@@ -1,0 +1,50 @@
+[
+  {
+    "id": "q-001",
+    "expectedDecision": "answered",
+    "expectedCitations": ["chunk-refund-01a"],
+    "requiredKeyPhrases": ["14-day", "money-back guarantee"]
+  },
+  {
+    "id": "q-002",
+    "expectedDecision": "answered",
+    "expectedCitations": ["chunk-auth-02b"],
+    "requiredKeyPhrases": ["15-minute", "inactivity"]
+  },
+  {
+    "id": "q-003",
+    "expectedDecision": "answered",
+    "expectedCitations": ["chunk-sla-03a"],
+    "requiredKeyPhrases": ["Sundays", "02:00", "04:00 UTC"]
+  },
+  {
+    "id": "q-004",
+    "expectedDecision": "answered",
+    "expectedCitations": ["chunk-data-04a"],
+    "requiredKeyPhrases": ["30 days"]
+  },
+  {
+    "id": "q-005",
+    "expectedDecision": "abstained",
+    "expectedCitations": [],
+    "requiredKeyPhrases": []
+  },
+  {
+    "id": "q-006",
+    "expectedDecision": "abstained",
+    "expectedCitations": [],
+    "requiredKeyPhrases": []
+  },
+  {
+    "id": "q-007",
+    "expectedDecision": "answered",
+    "expectedCitations": ["chunk-refund-01b"],
+    "requiredKeyPhrases": ["non-refundable"]
+  },
+  {
+    "id": "q-008",
+    "expectedDecision": "answered",
+    "expectedCitations": ["chunk-sla-03a"],
+    "requiredKeyPhrases": ["99.9%"]
+  }
+]

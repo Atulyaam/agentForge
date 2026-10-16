@@ -1,0 +1,62 @@
+[
+  {
+    "id": "ticket-001",
+    "category": "billing",
+    "priority": "medium",
+    "escalated": false
+  },
+  {
+    "id": "ticket-002",
+    "category": "technical",
+    "priority": "critical",
+    "escalated": true
+  },
+  {
+    "id": "ticket-003",
+    "category": "security",
+    "priority": "critical",
+    "escalated": true
+  },
+  {
+    "id": "ticket-004",
+    "category": "account",
+    "priority": "low",
+    "escalated": false
+  },
+  {
+    "id": "ticket-005",
+    "category": "general",
+    "priority": "low",
+    "escalated": false
+  },
+  {
+    "id": "ticket-006",
+    "category": "billing",
+    "priority": "high",
+    "escalated": false
+  },
+  {
+    "id": "ticket-007",
+    "category": "technical",
+    "priority": "high",
+    "escalated": false
+  },
+  {
+    "id": "ticket-008",
+    "category": "billing",
+    "priority": "critical",
+    "escalated": true
+  },
+  {
+    "id": "ticket-009",
+    "category": "security",
+    "priority": "critical",
+    "escalated": true
+  },
+  {
+    "id": "ticket-010",
+    "category": "general",
+    "priority": "low",
+    "escalated": false
+  }
+]

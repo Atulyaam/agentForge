@@ -1,0 +1,7 @@
+[
+  { "id": "demo-001", "sentiment": "positive" },
+  { "id": "demo-002", "sentiment": "negative" },
+  { "id": "demo-003", "sentiment": "neutral" },
+  { "id": "demo-004", "sentiment": "positive" },
+  { "id": "demo-005", "sentiment": "negative" }
+]

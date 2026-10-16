@@ -1,0 +1,50 @@
+[
+  {
+    "docId": "doc-refund-01",
+    "chunkId": "chunk-refund-01a",
+    "title": "Subscription Refund Policy — Standard & Annual Terms",
+    "content": "All annual subscription plans include an unconditional 14-day money-back guarantee from the initial transaction date. If a customer cancels within this 14-day window, a full refund is issued back to the original payment method within 5 to 7 business days. Monthly subscriptions are non-refundable after the first 48 hours of billing."
+  },
+  {
+    "docId": "doc-refund-01",
+    "chunkId": "chunk-refund-01b",
+    "title": "Subscription Refund Policy — Enterprise & Custom Engagements",
+    "content": "For Enterprise contracts, custom onboarding fees and professional services setup retainers are strictly non-refundable once work commences. Partial term credits may be applied to future renewal cycles subject to written approval from the Chief Commercial Officer."
+  },
+  {
+    "docId": "doc-auth-02",
+    "chunkId": "chunk-auth-02a",
+    "title": "Authentication Standards — Password and MFA Policy",
+    "content": "All user accounts must utilize passwords of at least 14 characters containing uppercase, lowercase, numbers, and symbols. Multi-Factor Authentication (MFA) is mandatory for all accounts possessing Administrator, Compliance, or Security privileges. Passwords expire every 90 days."
+  },
+  {
+    "docId": "doc-auth-02",
+    "chunkId": "chunk-auth-02b",
+    "title": "Authentication Standards — Session Lifecycle & Inactivity",
+    "content": "Active web console sessions are subject to an automatic 15-minute inactivity timeout. Following 15 consecutive minutes without user interaction, the session token is revoked and the user is redirected to the login gateway. API bearer tokens expire after 24 hours."
+  },
+  {
+    "docId": "doc-sla-03",
+    "chunkId": "chunk-sla-03a",
+    "title": "Service Level Agreement (SLA) — Availability Commitment",
+    "content": "AgentForge commits to a Monthly Uptime Percentage of at least 99.9% for core API inference services. Scheduled maintenance windows occur exclusively on Sundays between 02:00 and 04:00 UTC and are excluded from downtime calculations, provided 72 hours advance notice is posted."
+  },
+  {
+    "docId": "doc-sla-03",
+    "chunkId": "chunk-sla-03b",
+    "title": "Service Level Agreement (SLA) — Credit Claims",
+    "content": "If Monthly Uptime falls below 99.9%, customers may request SLA service credits: a 10% credit for uptime between 99.0% and 99.9%, and a 25% credit for uptime below 99.0%. Claims must be submitted within 30 days of the incident along with incident timestamps."
+  },
+  {
+    "docId": "doc-data-04",
+    "chunkId": "chunk-data-04a",
+    "title": "Data Governance — Retention and GDPR Deletion",
+    "content": "Under GDPR and CCPA regulations, customers have the right to request permanent data erasure. Data deletion requests must be processed and verified within 30 days of ticket verification. User prompt logs are retained for 30 days by default before cryptographic purging."
+  },
+  {
+    "docId": "doc-data-04",
+    "chunkId": "chunk-data-04b",
+    "title": "Data Governance — Disaster Recovery Backups",
+    "content": "Encrypted database backups are generated daily and stored in geographically isolated secondary regions. Disaster recovery backup archives are maintained for exactly 90 days before automated rolling deletion. Restorations must achieve an RTO of under 4 hours."
+  }
+]

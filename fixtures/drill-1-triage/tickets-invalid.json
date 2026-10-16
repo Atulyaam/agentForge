@@ -1,0 +1,23 @@
+[
+  {
+    "id": "bad-001",
+    "customerId": "",
+    "subject": "",
+    "body": "Missing customer and subject",
+    "tier": "standard"
+  },
+  {
+    "id": "",
+    "customerId": "cust-202",
+    "subject": "Valid subject",
+    "body": "Missing record ID",
+    "tier": "standard"
+  },
+  {
+    "id": "bad-003",
+    "customerId": "cust-203",
+    "subject": "Wrong tier",
+    "body": "Has invalid tier value",
+    "tier": "super-vip-nonexistent"
+  }
+]

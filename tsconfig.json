@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true
+  },
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/schemas" },
+    { "path": "packages/llm" },
+    { "path": "packages/policies" },
+    { "path": "packages/orchestrator" },
+    { "path": "packages/adapter-kit" },
+    { "path": "packages/evaluation" },
+    { "path": "apps/cli" }
+  ],
+  "files": []
+}

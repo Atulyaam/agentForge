@@ -1,0 +1,35 @@
+{
+  "name": "agentforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-driven agent engine — HackerRank Orchestrate October '26",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:faults": "vitest run --reporter=verbose tests/integration/faults",
+    "test:e2e": "vitest run tests/integration/web",
+    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "tsc -b",
+    "agentforge": "tsx apps/cli/src/index.ts",
+    "drill": "tsx apps/cli/src/index.ts drill",
+    "drill:1": "tsx apps/cli/src/index.ts drill 1",
+    "drill:2": "tsx apps/cli/src/index.ts drill 2",
+    "clean": "pnpm -r exec -- rimraf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.56.0",
+    "rimraf": "^5.0.5",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0",
+    "zod": "^3.22.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@9.1.0"
+}
