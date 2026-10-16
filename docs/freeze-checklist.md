@@ -133,5 +133,6 @@ If any gate check fails during live challenge execution:
 ## 9. Release Checkpoint Identification
 
 - **Release Tag:** `v0.1.0-s7-freeze`
+- **Commit Identifier:** `aba1e2c34553ea4bc242c7bdd16b0e566caa257e` (master)
 - **Scope Included:** Packages (`shared`, `schemas`, `policies`, `llm`, `orchestrator`, `adapter-kit`, `evaluation`), Apps (`cli`, `web`), Docs, Fixtures, Tests, Tooling configs.
 - **Excluded / Ignored:** Node modules, build artifacts (`dist/`, `.next/`, `*.tsbuildinfo`), local run data (`/runs/`), environment files (`.env`).
