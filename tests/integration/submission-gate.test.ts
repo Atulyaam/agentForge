@@ -88,17 +88,30 @@ describe('Final Submission Readiness Gate — Workstream 3', () => {
     expect(transcriptCheck?.detail).toContain('is only a metadata ledger');
   });
 
-  it('marks challenge contract as PENDING when official brief is unfulfilled template', async () => {
+  // Regression 1: Mock contracts pass while official challenge contract remains pending
+  it('treats mock drill schemas as benchmark baselines: mock output passes format check while official challenge contract remains PENDING', async () => {
     const report = await checkSubmissionReadiness({
       rootDir: tempDir,
+      outputFile: path.join(runsDir, 'output.json'), // runs/drill-1-triage/output.json
     });
 
-    const briefCheck = report.checks.find((c) => c.id === 'challenge_schema');
+    expect(report.engineeringHealth).toBe('PASS');
+    expect(report.officialBrief).toBe('PENDING');
+    expect(report.officialContract).toBe('PENDING');
+
+    const outputCheck = report.checks.find((c) => c.id === 'output_file');
+    expect(outputCheck?.status).toBe('PASS');
+
+    const briefCheck = report.checks.find((c) => c.id === 'official_brief');
     expect(briefCheck?.status).toBe('PENDING');
-    expect(briefCheck?.detail).toContain('Official challenge brief pending kickoff');
+
+    const contractCheck = report.checks.find((c) => c.id === 'challenge_schema');
+    expect(contractCheck?.status).toBe('PENDING');
+    expect(contractCheck?.detail).toContain('Mock drill schemas serve only as offline regression baselines');
   });
 
-  it('marks transcript as PASS and submission READY when genuine transcript fixture is registered and brief configured', async () => {
+  // Regression 2: Missing challenge brief prevents overall readiness
+  it('prevents overall readiness when challenge brief is missing or template placeholder (keeps submission BLOCKED)', async () => {
     // Register authentic transcript fixture [TEST-ONLY]
     const genuineChat = path.join(tempDir, 'genuine-chat.md');
     fs.writeFileSync(
@@ -107,28 +120,151 @@ describe('Final Submission Readiness Gate — Workstream 3', () => {
     );
     registerAuthenticTranscript(genuineChat, { rootDir: tempDir });
 
-    // Fulfill challenge brief
-    const briefPath = path.join(tempDir, 'docs', 'challenge-brief.md');
-    fs.writeFileSync(
-      briefPath,
-      '# Official Challenge Problem Statement\n\nTask: Categorize incoming customer support tickets into billing, technical, or general inquiries.\nInput dataset contains 100 rows.\nStrict 1:1 input/output cardinality required.\nDeadline: 24h.\n'.repeat(
-        3,
-      ),
-    );
-
+    // Brief is still template in tempDir/docs/challenge-brief.md
     const report = await checkSubmissionReadiness({
       rootDir: tempDir,
     });
 
+    expect(report.officialBrief).toBe('PENDING');
+    expect(report.officialContract).toBe('PENDING');
+    expect(report.submissionReadiness).toBe('BLOCKED');
+    expect(report.overallStatus).toBe('BLOCKED');
+    expect(report.summary).toContain('pending receipt and review of the official competition challenge brief');
+  });
+
+  // Regression 3: A valid configured challenge contract can pass its own checks
+  it('allows a valid configured challenge contract to PASS when brief and validator are satisfied', async () => {
+    // Fulfill challenge brief with authentic problem statement
+    const briefPath = path.join(tempDir, 'docs', 'challenge-brief.md');
+    fs.writeFileSync(
+      briefPath,
+      '# Official Challenge Problem Statement (Kickoff Delivery)\n\n' +
+        'Problem: Classify multi-lingual customer inquiries into billing, account, or tech_support.\n' +
+        'Input format: JSON array of 150 items with { id, query, language }.\n' +
+        'Output contract: JSON array of 150 items with { id, category, confidence, route }.\n' +
+        'Acceptance criteria: Valid JSON, 1:1 cardinality, confidence between 0 and 1, strict latency < 200ms.\n' +
+        'Evaluation metric: Weighted F1-score across 3 categories.',
+    );
+
+    // Create challenge-specific output
+    const challengeRunDir = path.join(tempDir, 'runs', 'challenge');
+    fs.mkdirSync(challengeRunDir, { recursive: true });
+    const challengeOutputPath = path.join(challengeRunDir, 'output.json');
+    fs.writeFileSync(
+      challengeOutputPath,
+      JSON.stringify([
+        { id: '1', category: 'billing', confidence: 0.95, route: 'finance' },
+      ]),
+    );
+
+    const report = await checkSubmissionReadiness({
+      rootDir: tempDir,
+      outputFile: challengeOutputPath,
+      challengeAdapterId: 'customer-inquiry-router',
+      challengeValidator: (content) => {
+        const parsed = JSON.parse(content);
+        return {
+          valid: Array.isArray(parsed) && parsed.length > 0 && !!parsed[0].category,
+          errors: [],
+        };
+      },
+    });
+
+    expect(report.officialBrief).toBe('PASS');
+    expect(report.officialContract).toBe('PASS');
+
+    const contractCheck = report.checks.find((c) => c.id === 'challenge_schema');
+    expect(contractCheck?.status).toBe('PASS');
+    expect(contractCheck?.detail).toContain('Official challenge-specific output contract validated and satisfied');
+  });
+
+  // Regression 4: Missing authentic transcript keeps overall readiness blocked
+  it('keeps overall readiness BLOCKED when authentic transcript is missing, even if brief and contract PASS', async () => {
+    // Fulfill challenge brief
+    const briefPath = path.join(tempDir, 'docs', 'challenge-brief.md');
+    fs.writeFileSync(
+      briefPath,
+      '# Official Challenge Problem Statement (Kickoff Delivery)\n\n' +
+        'Problem: Classify multi-lingual customer inquiries into billing, account, or tech_support.\n' +
+        'Input format: JSON array of 150 items with { id, query, language }.\n' +
+        'Output contract: JSON array of 150 items with { id, category, confidence, route }.\n' +
+        'Acceptance criteria: Valid JSON, 1:1 cardinality, confidence between 0 and 1, strict latency < 200ms.\n' +
+        'Evaluation metric: Weighted F1-score across 3 categories.',
+    );
+
+    const challengeRunDir = path.join(tempDir, 'runs', 'challenge');
+    fs.mkdirSync(challengeRunDir, { recursive: true });
+    const challengeOutputPath = path.join(challengeRunDir, 'output.json');
+    fs.writeFileSync(
+      challengeOutputPath,
+      JSON.stringify([{ id: '1', category: 'billing', confidence: 0.95, route: 'finance' }]),
+    );
+
+    const report = await checkSubmissionReadiness({
+      rootDir: tempDir,
+      outputFile: challengeOutputPath,
+      challengeAdapterId: 'customer-inquiry-router',
+    });
+
+    expect(report.officialBrief).toBe('PASS');
+    expect(report.officialContract).toBe('PASS');
+    // Still BLOCKED because no authentic transcript has been imported
+    expect(report.submissionReadiness).toBe('BLOCKED');
+    expect(report.overallStatus).toBe('BLOCKED');
+    expect(report.summary).toContain('pending import of genuine AI conversation transcript');
+  });
+
+  // Regression 5: All prerequisites pass only when each required evidence artifact is present and valid
+  it('marks submission READY and overallStatus READY only when all required evidence artifacts are validly present', async () => {
+    // 1. Register authentic transcript fixture [TEST-ONLY]
+    const genuineChat = path.join(tempDir, 'genuine-chat.md');
+    fs.writeFileSync(
+      genuineChat,
+      '# AI Coding Session [TEST-ONLY FIXTURE]\nUser: What is the backoff policy?\nAssistant: Exponential with jitter.',
+    );
+    registerAuthenticTranscript(genuineChat, { rootDir: tempDir });
+
+    // 2. Fulfill challenge brief
+    const briefPath = path.join(tempDir, 'docs', 'challenge-brief.md');
+    fs.writeFileSync(
+      briefPath,
+      '# Official Challenge Problem Statement (Kickoff Delivery)\n\n' +
+        'Problem: Classify multi-lingual customer inquiries into billing, account, or tech_support.\n' +
+        'Input format: JSON array of 150 items with { id, query, language }.\n' +
+        'Output contract: JSON array of 150 items with { id, category, confidence, route }.\n' +
+        'Acceptance criteria: Valid JSON, 1:1 cardinality, confidence between 0 and 1, strict latency < 200ms.\n' +
+        'Evaluation metric: Weighted F1-score across 3 categories.',
+    );
+
+    // 3. Fulfill challenge output
+    const challengeRunDir = path.join(tempDir, 'runs', 'challenge');
+    fs.mkdirSync(challengeRunDir, { recursive: true });
+    const challengeOutputPath = path.join(challengeRunDir, 'output.json');
+    fs.writeFileSync(
+      challengeOutputPath,
+      JSON.stringify([{ id: '1', category: 'billing', confidence: 0.95, route: 'finance' }]),
+    );
+
+    const report = await checkSubmissionReadiness({
+      rootDir: tempDir,
+      outputFile: challengeOutputPath,
+      challengeAdapterId: 'customer-inquiry-router',
+    });
+
     expect(report.engineeringHealth).toBe('PASS');
+    expect(report.officialBrief).toBe('PASS');
+    expect(report.officialContract).toBe('PASS');
     expect(report.submissionReadiness).toBe('READY');
     expect(report.overallStatus).toBe('READY');
+    expect(report.summary).toContain('Ready to package and submit');
 
     const transcriptCheck = report.checks.find((c) => c.id === 'authentic_transcript');
     expect(transcriptCheck?.status).toBe('PASS');
-    expect(transcriptCheck?.detail).toContain('Authentic conversation transcript verified');
 
-    const briefCheck = report.checks.find((c) => c.id === 'challenge_schema');
+    const contractCheck = report.checks.find((c) => c.id === 'challenge_schema');
+    expect(contractCheck?.status).toBe('PASS');
+
+    const briefCheck = report.checks.find((c) => c.id === 'official_brief');
     expect(briefCheck?.status).toBe('PASS');
   });
 

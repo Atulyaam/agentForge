@@ -20,6 +20,7 @@ import {
   scanBufferForSecrets,
   type OutputValidatorStrategy,
   type SecretViolation,
+  type ArtifactValidationResult,
 } from './packaging.js';
 import { resolveSubmissionTranscript } from './transcript.js';
 
@@ -43,6 +44,8 @@ export interface SubmissionGateReport {
   mockRegression: ReadinessStatus;
   liveProviderSmoke: ReadinessStatus;
   realModelCalibration: ReadinessStatus;
+  officialBrief: ReadinessStatus;
+  officialContract: ReadinessStatus;
   submissionReadiness: 'READY' | 'BLOCKED';
   checks: ReadinessCheckItem[];
   summary: string;
@@ -50,6 +53,8 @@ export interface SubmissionGateReport {
     codeArchive: { status: ReadinessStatus; estimatedMb: number; fileCount: number; validSize: boolean };
     outputFile: { status: ReadinessStatus; path: string; sizeMb: number; validContent: boolean; validSize: boolean };
     transcript: { status: ReadinessStatus; path?: string; sizeMb?: number; sha256?: string; format?: string };
+    brief?: { status: ReadinessStatus; path?: string };
+    contract?: { status: ReadinessStatus; adapterId?: string };
     smoke?: { status: ReadinessStatus; modelId?: string; latencyMs?: number };
     calibration?: { status: ReadinessStatus; modelId?: string; sampleSize?: number };
   };
@@ -60,6 +65,187 @@ export interface SubmissionGateOptions {
   outputFile?: string;
   transcriptFile?: string;
   outputFormat?: OutputValidatorStrategy;
+  briefFile?: string;
+  challengeAdapterId?: string;
+  challengeValidator?: (outputContent: string, outputPath: string) => { valid: boolean; errors: string[] };
+}
+
+/**
+ * Inspect whether the official competition brief has been received, reviewed, and configured.
+ * Strictly distinguishes between the uncompleted template and a confirmed official brief.
+ */
+export function inspectOfficialBrief(rootDir: string, customBriefPath?: string): {
+  status: ReadinessStatus;
+  detail: string;
+  remediation?: string;
+  briefPath: string;
+} {
+  const briefPath = customBriefPath
+    ? (path.isAbsolute(customBriefPath) ? customBriefPath : path.join(rootDir, customBriefPath))
+    : path.join(rootDir, 'docs', 'challenge-brief.md');
+
+  if (!fs.existsSync(briefPath)) {
+    return {
+      status: 'PENDING',
+      detail: `Official challenge brief not found at ${path.relative(rootDir, briefPath)}. Kickoff scheduled for Sat 24 Oct 2026, 18:00 IST.`,
+      remediation: 'Record official challenge problem statement in docs/challenge-brief.md upon kickoff release.',
+      briefPath,
+    };
+  }
+
+  let content: string;
+  try {
+    content = fs.readFileSync(briefPath, 'utf8');
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return {
+      status: 'PENDING',
+      detail: `Unable to read challenge brief at ${path.relative(rootDir, briefPath)}: ${errMsg}`,
+      remediation: 'Ensure docs/challenge-brief.md is readable.',
+      briefPath,
+    };
+  }
+
+  // Detect unfulfilled template markers
+  const isTemplate =
+    content.includes('Challenge Brief — Template') ||
+    content.includes('[PASTE EXACT CHALLENGE TEXT HERE') ||
+    content.includes('[PASTE THE ACTUAL CHALLENGE BRIEF HERE') ||
+    content.includes('To be completed at Kickoff') ||
+    content.includes('PENDING_KICKOFF') ||
+    content.includes('[PASTE EXACT CHALLENGE TEXT');
+
+  if (isTemplate) {
+    return {
+      status: 'PENDING',
+      detail: 'Official challenge brief pending kickoff (expected Sat 24 Oct 2026, 18:00 IST). Template placeholder active.',
+      remediation: 'Fill docs/challenge-brief.md with the official problem statement upon release and update status to CONFIRMED.',
+      briefPath,
+    };
+  }
+
+  if (content.trim().length < 200) {
+    return {
+      status: 'PENDING',
+      detail: 'Challenge brief file exists but appears incomplete (< 200 characters).',
+      remediation: 'Record the complete verbatim problem statement and interpretation in docs/challenge-brief.md.',
+      briefPath,
+    };
+  }
+
+  return {
+    status: 'PASS',
+    detail: `Official challenge brief verified in ${path.relative(rootDir, briefPath)}. Problem statement recorded and reviewed.`,
+    briefPath,
+  };
+}
+
+/**
+ * Inspect whether the challenge output contract has been tested and satisfied.
+ * Strictly treats mock drill schemas as offline benchmark baselines, NOT official challenge contracts.
+ */
+export function inspectOfficialContract(options: {
+  rootDir: string;
+  briefStatus: ReadinessStatus;
+  outputFile: string;
+  outputFormat: OutputValidatorStrategy;
+  outputValidation: ArtifactValidationResult;
+  challengeAdapterId?: string;
+  challengeValidator?: (outputContent: string, outputPath: string) => { valid: boolean; errors: string[] };
+}): {
+  status: ReadinessStatus;
+  detail: string;
+  remediation?: string;
+} {
+  const { briefStatus, outputFile, outputValidation, challengeAdapterId, challengeValidator } = options;
+
+  // 1. If official brief is pending, official contract is strictly PENDING
+  if (briefStatus !== 'PASS') {
+    return {
+      status: 'PENDING',
+      detail: 'Official challenge output contract is PENDING: official competition brief has not yet been received. Mock drill schemas serve only as offline regression baselines.',
+      remediation: 'Ingest official challenge brief at kickoff, implement the competition ChallengeAdapter, and bind its schema.',
+    };
+  }
+
+  // 2. Official brief is confirmed. Now check if challenge-specific contract is configured
+  const normOutput = outputFile.replace(/\\/g, '/');
+  const isMockDrillOutput =
+    normOutput.includes('runs/drill-1-triage') ||
+    normOutput.includes('runs/drill-2-rag') ||
+    normOutput.includes('fixtures/demo');
+
+  if (isMockDrillOutput && !challengeAdapterId && !challengeValidator) {
+    return {
+      status: 'PENDING',
+      detail: `Official challenge contract is PENDING: current output file (${outputFile}) is a mock drill baseline. An official competition challenge output contract has not yet been bound.`,
+      remediation: 'Implement the competition adapter, generate challenge output (e.g. runs/challenge/output.json), and validate against the official contract.',
+    };
+  }
+
+  // 3. Custom challenge validator provided
+  if (challengeValidator) {
+    if (!outputValidation.exists) {
+      return {
+        status: 'FAIL',
+        detail: `Challenge output file not found at: ${outputValidation.path}`,
+        remediation: 'Execute run to generate official challenge output.',
+      };
+    }
+    try {
+      const raw = fs.readFileSync(outputValidation.path, 'utf8');
+      const res = challengeValidator(raw, outputValidation.path);
+      if (res.valid) {
+        return {
+          status: 'PASS',
+          detail: 'Official challenge-specific output contract validated and satisfied.',
+        };
+      } else {
+        return {
+          status: 'FAIL',
+          detail: `Official challenge contract validation failed: ${res.errors.join('; ')}`,
+          remediation: 'Fix adapter output formatting to strictly satisfy the official challenge schema.',
+        };
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return {
+        status: 'FAIL',
+        detail: `Challenge contract validator threw an error: ${errMsg}`,
+        remediation: 'Ensure challenge validator handles output format safely.',
+      };
+    }
+  }
+
+  // 4. Challenge adapter ID provided
+  if (challengeAdapterId) {
+    if (outputValidation.validContent && outputValidation.validSize) {
+      return {
+        status: 'PASS',
+        detail: `Official challenge contract verified against adapter "${challengeAdapterId}". Output satisfies schema constraints.`,
+      };
+    } else {
+      return {
+        status: 'FAIL',
+        detail: `Challenge output file fails validation for adapter "${challengeAdapterId}": ${outputValidation.errors.join('; ')}`,
+        remediation: `Ensure adapter "${challengeAdapterId}" produces valid output matching the official schema.`,
+      };
+    }
+  }
+
+  // 5. Explicit challenge output validated
+  if (outputValidation.exists && outputValidation.validContent && outputValidation.validSize) {
+    return {
+      status: 'PASS',
+      detail: `Challenge output file (${path.basename(outputValidation.path)}) satisfies configured output contract format (${options.outputFormat}).`,
+    };
+  }
+
+  return {
+    status: 'PENDING',
+    detail: 'Official challenge contract pending adapter implementation and output verification.',
+    remediation: 'Execute challenge run and validate output against domain schema.',
+  };
 }
 
 /**
@@ -120,12 +306,21 @@ export async function checkSubmissionReadiness(
   });
 
   // ── 3. Live Provider Smoke Test ────────────────────────────────────────────
+  interface SmokeReportFile {
+    status?: string;
+    modelId?: string;
+    latencyMs?: number;
+    error?: string;
+    message?: string;
+  }
   const smokeReportPath = path.join(rootDir, 'runs', 'smoke', 'smoke-report.json');
-  let smokeReport: any = null;
+  let smokeReport: SmokeReportFile | null = null;
   if (fs.existsSync(smokeReportPath)) {
     try {
-      smokeReport = JSON.parse(fs.readFileSync(smokeReportPath, 'utf8'));
-    } catch {}
+      smokeReport = JSON.parse(fs.readFileSync(smokeReportPath, 'utf8')) as SmokeReportFile;
+    } catch (_err) {
+      /* ignore corrupted smoke report */
+    }
   }
 
   let liveProviderSmokeStatus: ReadinessStatus = 'PENDING';
@@ -158,12 +353,20 @@ export async function checkSubmissionReadiness(
   }
 
   // ── 4. Real-Model Calibration (Bounded Sample) ─────────────────────────────
+  interface CalibrationReportFile {
+    status?: string;
+    modelId?: string;
+    sampleSize?: number;
+    message?: string;
+  }
   const calReportPath = path.join(rootDir, 'runs', 'calibration', 'calibration-report.json');
-  let calReport: any = null;
+  let calReport: CalibrationReportFile | null = null;
   if (fs.existsSync(calReportPath)) {
     try {
-      calReport = JSON.parse(fs.readFileSync(calReportPath, 'utf8'));
-    } catch {}
+      calReport = JSON.parse(fs.readFileSync(calReportPath, 'utf8')) as CalibrationReportFile;
+    } catch (_err) {
+      /* ignore corrupted calibration report */
+    }
   }
 
   let realModelCalibrationStatus: ReadinessStatus = 'PENDING';
@@ -254,37 +457,36 @@ export async function checkSubmissionReadiness(
     });
   }
 
-  // ── 4. Challenge-Specific Output Contract ───────────────────────────────────
-  const briefPath = path.join(rootDir, 'docs', 'challenge-brief.md');
-  const briefExists = fs.existsSync(briefPath);
-  let briefFulfilled = false;
+  // ── 4. Official Challenge Brief Check ───────────────────────────────────────
+  const briefCheck = inspectOfficialBrief(rootDir, options.briefFile);
+  checks.push({
+    id: 'official_brief',
+    name: 'Official Challenge Brief (Kickoff Delivery)',
+    status: briefCheck.status,
+    detail: briefCheck.detail,
+    remediation: briefCheck.remediation,
+    artifactPath: briefCheck.briefPath,
+  });
 
-  if (briefExists) {
-    const briefContent = fs.readFileSync(briefPath, 'utf8');
-    // Check if brief contains official challenge text rather than default template instructions
-    briefFulfilled =
-      !briefContent.includes('Paste the complete, unaltered challenge problem statement here') &&
-      briefContent.length > 500;
-  }
+  // ── 5. Official Challenge Output Contract Check ─────────────────────────────
+  const contractCheck = inspectOfficialContract({
+    rootDir,
+    briefStatus: briefCheck.status,
+    outputFile,
+    outputFormat,
+    outputValidation,
+    challengeAdapterId: options.challengeAdapterId,
+    challengeValidator: options.challengeValidator,
+  });
+  checks.push({
+    id: 'challenge_schema',
+    name: 'Official Challenge Output Contract',
+    status: contractCheck.status,
+    detail: contractCheck.detail,
+    remediation: contractCheck.remediation,
+  });
 
-  if (briefFulfilled) {
-    checks.push({
-      id: 'challenge_schema',
-      name: 'Challenge-Specific Domain Contract',
-      status: 'PASS',
-      detail: 'Official challenge brief recorded and domain validation contract configured.',
-    });
-  } else {
-    checks.push({
-      id: 'challenge_schema',
-      name: 'Challenge-Specific Domain Contract',
-      status: 'PENDING',
-      detail: 'Official challenge brief pending kickoff (expected Oct 24, 18:00 IST). Generic format validation active.',
-      remediation: 'Fill docs/challenge-brief.md with the official problem statement upon release and bind adapter schemas.',
-    });
-  }
-
-  // ── 5. Authentic AI Transcript Deliverable Readiness ───────────────────────
+  // ── 6. Authentic AI Transcript Deliverable Readiness ───────────────────────
   const transcriptResolution = resolveSubmissionTranscript(options.transcriptFile, rootDir);
 
   if (transcriptResolution.resolved && transcriptResolution.transcriptPath) {
@@ -313,7 +515,7 @@ export async function checkSubmissionReadiness(
     });
   }
 
-  // ── 6. Security & 50 MB Limits Compliance ───────────────────────────────────
+  // ── 7. Security & 50 MB Limits Compliance ───────────────────────────────────
   const secretViolations: SecretViolation[] = [];
   for (const item of included) {
     const ext = path.extname(item.fullPath).toLowerCase();
@@ -322,7 +524,9 @@ export async function checkSubmissionReadiness(
         const content = fs.readFileSync(item.fullPath, 'utf8');
         const found = scanBufferForSecrets(content, item.relPath);
         secretViolations.push(...found);
-      } catch {}
+      } catch (_err) {
+        /* ignore unreadable file */
+      }
     }
   }
 
@@ -348,12 +552,17 @@ export async function checkSubmissionReadiness(
     });
   }
 
-  // ── 7. Overall Readiness Status Determination ──────────────────────────────
+  // ── 8. Overall Readiness Status Determination ──────────────────────────────
   const hasFailures = checks.some((c) => c.status === 'FAIL');
   const hasBlocks = checks.some((c) => c.status === 'BLOCKED');
+  const hasPendingDeliverables =
+    briefCheck.status === 'PENDING' ||
+    contractCheck.status === 'PENDING' ||
+    !transcriptResolution.resolved;
 
   const engineeringHealth: ReadinessStatus = repoOk && validCodeSize ? 'PASS' : 'FAIL';
-  const submissionReadiness: 'READY' | 'BLOCKED' = !hasFailures && !hasBlocks ? 'READY' : 'BLOCKED';
+  const submissionReadiness: 'READY' | 'BLOCKED' =
+    !hasFailures && !hasBlocks && !hasPendingDeliverables ? 'READY' : 'BLOCKED';
 
   let overallStatus: 'READY' | 'BLOCKED' | 'FAILED' = 'READY';
   let summary = '';
@@ -361,13 +570,27 @@ export async function checkSubmissionReadiness(
   if (hasFailures) {
     overallStatus = 'FAILED';
     summary = 'Engineering verification or deliverable validation failed. Remediate failing checks.';
-  } else if (hasBlocks) {
+  } else if (hasBlocks || hasPendingDeliverables) {
     overallStatus = 'BLOCKED';
-    summary =
-      'Local engineering health is PASS. Submission is BLOCKED pending authentic AI conversation transcript import and official challenge kickoff.';
+    if (!transcriptResolution.resolved && briefCheck.status === 'PENDING') {
+      summary =
+        'Local engineering health is PASS. Submission is BLOCKED pending authentic AI conversation transcript import and official challenge kickoff.';
+    } else if (briefCheck.status === 'PENDING') {
+      summary =
+        'Local engineering health is PASS. Submission is BLOCKED pending receipt and review of the official competition challenge brief.';
+    } else if (contractCheck.status === 'PENDING') {
+      summary =
+        'Local engineering health is PASS. Submission is BLOCKED pending official challenge output contract validation.';
+    } else if (!transcriptResolution.resolved) {
+      summary =
+        'Local engineering health is PASS. Submission is BLOCKED pending import of genuine AI conversation transcript.';
+    } else {
+      summary =
+        'Local engineering health is PASS. Submission is BLOCKED pending official challenge deliverables validation.';
+    }
   } else {
     overallStatus = 'READY';
-    summary = 'All engineering checks, deliverables, and authentic transcript verifications passed. Ready to package and submit!';
+    summary = 'All engineering checks, official challenge deliverables, and authentic transcript verifications passed. Ready to package and submit!';
   }
 
   return {
@@ -377,6 +600,8 @@ export async function checkSubmissionReadiness(
     mockRegression: mockRegressionStatus,
     liveProviderSmoke: liveProviderSmokeStatus,
     realModelCalibration: realModelCalibrationStatus,
+    officialBrief: briefCheck.status,
+    officialContract: contractCheck.status,
     submissionReadiness,
     checks,
     summary,
@@ -400,6 +625,14 @@ export async function checkSubmissionReadiness(
         sizeMb: transcriptResolution.sizeMb,
         sha256: transcriptResolution.sha256,
         format: transcriptResolution.format,
+      },
+      brief: {
+        status: briefCheck.status,
+        path: briefCheck.briefPath,
+      },
+      contract: {
+        status: contractCheck.status,
+        adapterId: options.challengeAdapterId,
       },
       smoke: smokeReport
         ? { status: liveProviderSmokeStatus, modelId: smokeReport.modelId, latencyMs: smokeReport.latencyMs }

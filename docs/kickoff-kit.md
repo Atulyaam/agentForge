@@ -213,12 +213,14 @@ pnpm agentforge gate
 3. **Authentic AI Chat Transcript:** Genuine exported conversation file verified against the vault SHA-256 ledger.
 
 ### Status Meaning & Fail-Closed Guard
-| Check ID | Evaluated Condition | Passing Condition | Blocking Condition |
+| Check ID | Evaluated Condition | Passing Condition | Blocking / Pending Condition |
 |---|---|---|---|
 | `repo_health` | Build files, lockfile, configs, preflight | `PASS` | `FAIL` (Missing essential repo files) |
+| `mock_regression` | S6 Drill 1 & Drill 2 regression suite | `PASS` | `FAIL` (Mock drill regressions) |
 | `code_zip` | Project files collected, <= 50 MB | `PASS` | `FAIL` (Oversized or unexcluded files) |
 | `output_file` | Challenge output present, valid format, <= 50 MB | `PASS` | `FAIL` (Corrupt, missing, empty, or oversized) |
-| `challenge_schema` | Official challenge brief fulfilled | `PASS` | `PENDING` (Unfulfilled template prior to kickoff) |
+| `official_brief` | Official competition challenge brief recorded | `PASS` | `PENDING` (Template placeholder prior to kickoff) |
+| `challenge_schema` | Official challenge output contract validated | `PASS` | `PENDING` (Pending kickoff adapter binding) |
 | `authentic_transcript` | Real exported chat registered, SHA-256 verified | `PASS` | `BLOCKED` (Missing or INDEX.md supplied) |
 | `secrets_and_limits` | 0 live secrets in codebase, all files <= 50 MB | `PASS` | `FAIL` (Secrets or oversized deliverables) |
 
@@ -226,3 +228,26 @@ pnpm agentforge gate
 - Local engineering health is `PASS` when repo, code archive, and unit tests are sound.
 - Contest submission readiness is `BLOCKED` until the genuine AI transcript is imported and the official challenge brief is fulfilled.
 - Never declare a submission `READY` when relying on mock fixtures or index files.
+
+---
+
+## 9. Synthetic Kickoff Workflow Rehearsal (`pnpm agentforge rehearsal`)
+
+To rehearse the complete Hour 0–3 kickoff workflow without touching the authoritative official brief or making live provider calls:
+
+```bash
+pnpm agentforge rehearsal
+# or alias:
+pnpm agentforge rehearse
+```
+
+This command executes a 9-step synthetic challenge exercise:
+1. Records synthetic brief into `runs/kickoff-rehearsal/mock-brief.md` (labeled `[REHEARSAL MOCK]`).
+2. Analyzes input/output contracts, 1:1 cardinality constraints, and evaluation metrics.
+3. Selects existing `support-triage` adapter with explicit architectural justification.
+4. Executes heuristic keyword baseline on synthetic fixtures.
+5. Executes mock adapter pipeline with `executeRun`, persisting execution trace (`run-trace.json`) and metrics.
+6. Evaluates output independently against isolated ground truth (`fixtures/drill-1-triage/tickets-expected.json`).
+7. Validates mock output contract (10 records, <= 50 MB, 0 secrets).
+8. Runs submission packaging dry-run, confirming fail-closed transcript behavior.
+9. Produces `docs/kickoff-rehearsal-report.md` and `runs/kickoff-rehearsal/rehearsal-report.json`.

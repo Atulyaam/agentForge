@@ -17,6 +17,7 @@ export interface LiveHttpLLMProviderOptions {
   modelId: string;
   baseUrl?: string;
   timeoutMs?: number;
+  customHeaders?: Record<string, string>;
 }
 
 export class LiveHttpLLMProvider implements LLMProvider {
@@ -24,6 +25,7 @@ export class LiveHttpLLMProvider implements LLMProvider {
   private readonly apiKey: string;
   private readonly endpoint: string;
   private readonly timeoutMs: number;
+  private readonly customHeaders?: Record<string, string>;
 
   constructor(options: LiveHttpLLMProviderOptions) {
     if (!options.apiKey || options.apiKey.trim().length === 0) {
@@ -42,6 +44,7 @@ export class LiveHttpLLMProvider implements LLMProvider {
     this.apiKey = options.apiKey;
     this.modelId = options.modelId;
     this.timeoutMs = options.timeoutMs ?? 30000;
+    this.customHeaders = options.customHeaders;
 
     const base = options.baseUrl ?? 'https://api.openai.com/v1';
     // Normalize endpoint to chat completions
@@ -72,6 +75,7 @@ export class LiveHttpLLMProvider implements LLMProvider {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.apiKey}`,
+          ...(this.customHeaders ?? {}),
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -79,9 +83,13 @@ export class LiveHttpLLMProvider implements LLMProvider {
     } catch (err: any) {
       clearTimeout(timer);
       const isAbort = err.name === 'AbortError' || controller.signal.aborted;
-      const safeMsg = isAbort
-        ? `Live LLM request timed out after ${this.timeoutMs}ms`
-        : `Live LLM network request failed: ${redact(err.message ?? String(err))}`;
+      if (isAbort) {
+        throw new AgentForgeError(
+          'LLM_TIMEOUT',
+          `Live LLM request timed out after ${this.timeoutMs}ms`,
+        );
+      }
+      const safeMsg = `Live LLM network request failed: ${redact(err.message ?? String(err))}`;
       throw new AgentForgeError('INTERNAL_ERROR', safeMsg);
     } finally {
       clearTimeout(timer);

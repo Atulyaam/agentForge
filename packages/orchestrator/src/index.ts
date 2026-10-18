@@ -284,7 +284,9 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
               }
             }
           }
-        } catch {}
+        } catch (_err) {
+          /* ignore corrupted resume outputs */
+        }
       }
     }
 
@@ -295,7 +297,7 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
         const recordId = adapter.recordId(record);
         const normalized = adapter.normalize(record);
         await adapter.buildContext(normalized, adapterDeps);
-        const dryRunOutput = adapter.toOutput(normalized, { sentiment: 'neutral', confidence: 1.0, reasoning: 'DRY_RUN' } as any);
+        const dryRunOutput = adapter.toOutput(normalized, { sentiment: 'neutral', confidence: 1.0, reasoning: 'DRY_RUN' } as unknown as Parameters<typeof adapter.toOutput>[1]);
         ctx.results.push({
           recordId,
           status: 'passed',
@@ -486,7 +488,7 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
       .filter((r) => r.status === 'passed' && r.output !== undefined)
       .map((r) => r.output);
 
-    const validationResult = adapter.validateOutput(outputs as any[], recordsToProcess);
+    const validationResult = adapter.validateOutput(outputs as unknown[], recordsToProcess);
 
     if (!validationResult.ok) {
       emitEvent(ctx, 'output_validation_failed', { problems: validationResult.problems });
@@ -499,7 +501,7 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
     emitEvent(ctx, 'output_validated', { recordCount: outputs.length });
 
     // ── Stage 4: Write Output (FR-015 — atomic write + revalidation) ─────
-    await adapter.writeOutput(outputs as any[], outputPath);
+    await adapter.writeOutput(outputs as unknown[], outputPath);
     await atomicWrite(outputPath, fs.readFileSync(outputPath, 'utf-8'));
 
     // Reopen and revalidate (FR-015)
@@ -615,3 +617,7 @@ export * from './submission-gate.js';
 
 export * from './provider-smoke.js';
 export * from './calibration.js';
+
+// ── Synthetic Kickoff Workflow Rehearsal (Workstream 3) ──────────────────────
+
+export * from './kickoff-rehearsal.js';

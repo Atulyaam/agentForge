@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, use } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, use } from 'react';
 import Link from 'next/link';
 import type { RunDetails } from '@/lib/types';
 import type { RunEvent } from '@agentforge/shared';
@@ -26,7 +26,20 @@ export default function RunDetailPage({ params }: PageProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'output' | 'timeline' | 'artifacts' | 'config'>('output');
-  const [isPolling, setIsPolling] = useState(false);
+
+  const terminalStatuses = useMemo(
+    () => [
+      'succeeded',
+      'succeeded_with_warnings',
+      'failed',
+      'blocked',
+      'cancelled',
+      'timed_out',
+    ],
+    [],
+  );
+
+  const isPolling = Boolean(run && !terminalStatuses.includes(run.status));
 
   // Load run details
   const loadRunDetails = useCallback(async (quiet = false) => {
@@ -44,7 +57,7 @@ export default function RunDetailPage({ params }: PageProps) {
       setError(err instanceof Error ? err.message : 'Failed to fetch run details');
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
+      if (!quiet) setIsRefreshing(false);
     }
   }, [runId]);
 
@@ -67,37 +80,57 @@ export default function RunDetailPage({ params }: PageProps) {
 
   // Initial load (FR-005: Refresh recovery)
   useEffect(() => {
-    loadRunDetails();
-    loadEvents();
-  }, [loadRunDetails, loadEvents]);
+    let cancelled = false;
+    const init = async () => {
+      try {
+        const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.ok) {
+          setRun(data.data);
+          setError(null);
+        } else {
+          setError(data.message || 'Run not found');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to fetch run details');
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+
+      try {
+        const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/events?after=-1`);
+        const data = await res.json();
+        if (!cancelled && data.ok && Array.isArray(data.events)) {
+          setEvents(data.events);
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    };
+
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, [runId]);
 
   // Active Polling with backoff for non-terminal runs (FR-UI-003)
   useEffect(() => {
-    if (!run) return;
+    if (!isPolling) return;
 
-    const terminalStatuses = [
-      'succeeded',
-      'succeeded_with_warnings',
-      'failed',
-      'blocked',
-      'cancelled',
-      'timed_out',
-    ];
-
-    const isTerminal = terminalStatuses.includes(run.status);
-    if (isTerminal) {
-      setIsPolling(false);
-      return;
-    }
-
-    setIsPolling(true);
     let pollIntervalMs = 1500;
     let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
 
     const poll = async () => {
       await loadRunDetails(true);
+      if (cancelled) return;
       const lastSeq = events.length > 0 ? events[events.length - 1].sequence : -1;
       await loadEvents(lastSeq);
+      if (cancelled) return;
 
       // Backoff slightly up to 4s
       pollIntervalMs = Math.min(pollIntervalMs + 500, 4000);
@@ -105,8 +138,11 @@ export default function RunDetailPage({ params }: PageProps) {
     };
 
     timer = setTimeout(poll, pollIntervalMs);
-    return () => clearTimeout(timer);
-  }, [run?.status, events, loadRunDetails, loadEvents]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isPolling, events, loadRunDetails, loadEvents]);
 
   const formatTime = (iso?: string) => {
     if (!iso) return '—';

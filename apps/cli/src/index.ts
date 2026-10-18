@@ -11,7 +11,6 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
 import { AgentForgeError, generateRunId } from '@agentforge/shared';
 import { loadConfig } from '@agentforge/schemas';
 import { LLMAdapter, MockLLMProvider } from '@agentforge/llm';
@@ -24,6 +23,7 @@ import {
   checkSubmissionReadiness,
   runProviderSmokeTest,
   runModelCalibration,
+  runKickoffRehearsal,
   type OutputValidatorStrategy,
 } from '@agentforge/orchestrator';
 import {
@@ -34,7 +34,6 @@ import {
   compareAgentWithBaseline,
   renderBaselineMarkdownTable,
   clusterFailuresByFeatures,
-  extractFailuresFromResults,
   renderFailureAnalysisMarkdown,
   compareRuns,
   renderRunDiffMarkdown,
@@ -72,7 +71,9 @@ function loadDotEnv(rootDir = process.cwd()): void {
         }
       }
     }
-  } catch {}
+  } catch (_err) {
+    /* ignore missing or unreadable .env */
+  }
 }
 
 loadDotEnv();
@@ -116,7 +117,9 @@ function scanForSecrets(dirs: string[]): boolean {
             for (const p of patterns) {
               if (p.test(content)) return true;
             }
-          } catch {}
+          } catch (_err) {
+            /* ignore unreadable file */
+          }
         }
       }
     }
@@ -148,6 +151,7 @@ Commands:
   readiness      Run final submission readiness gate (validates all 3 deliverables, 50 MB limits, and genuine transcript)
   provider-smoke Run safe opt-in live provider smoke test (--live --max-calls 1)
   calibrate      Run bounded real-model calibration on existing adapters (--live --sample 3)
+  rehearsal      Run synthetic kickoff workflow rehearsal (deterministic, mock data only)
   interview-pack Generate interview readiness pack (FR-039)
   transcript     Manage AI transcript vault
 
@@ -601,6 +605,8 @@ async function commandReadiness(args: Map<string, string>): Promise<number> {
   console.log(`  Mock Regression Suite:        ${report.mockRegression}`);
   console.log(`  Live Provider Smoke Test:     ${report.liveProviderSmoke}`);
   console.log(`  Real-Model Calibration:       ${report.realModelCalibration}`);
+  console.log(`  Official Challenge Brief:     ${report.officialBrief}`);
+  console.log(`  Official Challenge Contract:  ${report.officialContract}`);
   console.log(`  Contest Deliverables:         ${report.submissionReadiness}`);
   console.log('═══════════════════════════════════════════════════════════════════════════════');
   console.log(`\n${report.summary}\n`);
@@ -666,7 +672,8 @@ async function commandCalibrate(args: Map<string, string>): Promise<number> {
   const live = args.get('live') === 'true';
   const sample = args.get('sample') ? Number(args.get('sample')) : 3;
   const maxCalls = args.get('max-calls') ? Number(args.get('max-calls')) : sample;
-  const adapterId = (args.get('adapter') as any) ?? 'all';
+  const adapterParam = args.get('adapter');
+  const adapterId = adapterParam === 'support-triage' || adapterParam === 'policy-rag' ? adapterParam : 'all';
 
   console.log('\n🎯 AgentForge Real-Model Calibration (Workstream 2)\n');
   if (!live) {
@@ -710,6 +717,38 @@ async function commandCalibrate(args: Map<string, string>): Promise<number> {
   if (result.status === 'FAILED') {
     return 1;
   }
+  return 0;
+}
+
+// ─── Command: rehearsal (Workstream 3) ───────────────────────────────────────
+
+async function commandRehearsal(_args: Map<string, string>): Promise<number> {
+  console.log('\n🎭 AgentForge Synthetic Kickoff Workflow Rehearsal (Workstream 3)');
+  console.log('   Mode: DETERMINISTIC REHEARSAL [MOCK DATA ONLY]');
+  console.log('   Zero live API calls. Official brief and authentic transcript remain PENDING.\n');
+
+  const result = await runKickoffRehearsal({
+    rootDir: process.cwd(),
+  });
+
+  for (const step of result.steps) {
+    console.log(`  ✅ [STEP ${step.stepNumber}] ${step.name}`);
+    console.log(`     ${step.summary}`);
+  }
+
+  console.log('\n═══════════════════════════════════════════════════════════════════════════════');
+  console.log('  REHEARSAL EXECUTION SUMMARY');
+  console.log(`  Run ID:              ${result.runId}`);
+  console.log(`  Adapter Selected:    ${result.adapterSelected}`);
+  console.log(`  Baseline Accuracy:   ${(Number(result.baselineMetrics.categoryAccuracy) * 100).toFixed(1)}%`);
+  console.log(`  Agent Accuracy:      ${(Number(result.agentMetrics.categoryAccuracy) * 100).toFixed(1)}%`);
+  console.log(`  Contract Valid:      ${result.contractValidation.valid ? 'YES' : 'NO'} (${result.contractValidation.recordCount} records, ${result.contractValidation.fileSizeMb} MB, 0 secrets)`);
+  console.log(`  Packaging Dry-Run:   ${result.packagingDryRun.success ? 'PASSED' : 'FAILED'} (${result.packagingDryRun.fileCount} files, ${result.packagingDryRun.estimatedArchiveMb} MB)`);
+  console.log(`  Transcript Status:   ${result.packagingDryRun.transcriptStatus}`);
+  console.log('═══════════════════════════════════════════════════════════════════════════════');
+  console.log(`\n📄 Rehearsal report written to: ${result.artifacts.rehearsalMarkdownPath}`);
+  console.log(`📦 Rehearsal artifacts: ${path.dirname(result.artifacts.rehearsalJsonPath)}\n`);
+
   return 0;
 }
 
@@ -805,7 +844,7 @@ async function commandEval(args: Map<string, string>): Promise<number> {
     if (fs.existsSync(agentOutputPath) && expected) {
       try {
         const agentOutputs = JSON.parse(fs.readFileSync(agentOutputPath, 'utf-8'));
-        const expMap = new Map(expected.map((e: any) => [e.id, e.sentiment]));
+        const expMap = new Map((expected as Array<{ id: string; sentiment?: string }>).map((e) => [e.id, e.sentiment]));
         let correct = 0;
         let count = 0;
         for (const o of agentOutputs) {
@@ -815,7 +854,9 @@ async function commandEval(args: Map<string, string>): Promise<number> {
           }
         }
         agentAccuracy = count > 0 ? correct / count : 'unavailable';
-      } catch {}
+      } catch (_err) {
+        /* ignore invalid output parse */
+      }
     }
 
     const comparison = compareAgentWithBaseline(
@@ -1048,6 +1089,11 @@ async function main(): Promise<void> {
       case 'calibrate':
       case 'calibration':
         exitCode = await commandCalibrate(parsedArgs);
+        break;
+      case 'rehearsal':
+      case 'rehearse':
+      case 'kickoff-rehearsal':
+        exitCode = await commandRehearsal(parsedArgs);
         break;
       case 'transcript':
         if (parsedArgs.get('_0') === 'add') {

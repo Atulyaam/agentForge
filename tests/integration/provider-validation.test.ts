@@ -134,6 +134,70 @@ describe('Live Provider Validation & Calibration — Workstreams 1 & 2', () => {
       expect(res.error).toBeDefined();
       expect(res.message).toContain('failed');
     });
+
+    it('verifies that placeholder credentials never trigger external network requests', async () => {
+      const fetchSpy = vi.fn();
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = fetchSpy;
+
+      try {
+        const placeholders = ['mock-key', 'dummy', 'test-key', 'placeholder', 'mock-env'];
+        for (const p of placeholders) {
+          const res = await runProviderSmokeTest({
+            live: true,
+            rootDir: tempDir,
+            env: { LLM_API_KEY: p, LLM_MODEL: 'gpt-4o' },
+          });
+          expect(res.status).toBe('PENDING');
+          expect(res.configValid).toBe(false);
+        }
+        // Fetch must NEVER have been called for placeholder keys
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it('dispatches to real LiveHttpLLMProvider and enforces 1-call ceiling in live mode', async () => {
+      let fetchCallCount = 0;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        fetchCallCount++;
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    status: 'ok',
+                    engine: 'openai-live',
+                    timestamp: new Date().toISOString(),
+                  }),
+                },
+              },
+            ],
+            model: 'gpt-4o-mini',
+            usage: { prompt_tokens: 10, completion_tokens: 12 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      });
+
+      try {
+        const res = await runProviderSmokeTest({
+          live: true,
+          maxCalls: 1,
+          rootDir: tempDir,
+          env: { LLM_API_KEY: 'sk-live-actual-configured-test-key-12345', LLM_MODEL: 'gpt-4o-mini' },
+        });
+
+        expect(res.status).toBe('PASSED');
+        expect(res.modelId).toBe('gpt-4o-mini');
+        expect(fetchCallCount).toBe(1); // Strictly 1 call made, 0 retries
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
   });
 
   describe('Workstream 2: Bounded Real-Model Calibration', () => {

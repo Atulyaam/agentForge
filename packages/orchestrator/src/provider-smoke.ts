@@ -14,8 +14,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { z } from 'zod';
-import { AgentForgeError, redact } from '@agentforge/shared';
-import { LiveHttpLLMProvider, LLMAdapter } from '@agentforge/llm';
+import { redact } from '@agentforge/shared';
+import { LiveHttpLLMProvider, LLMAdapter, type LLMProvider } from '@agentforge/llm';
 import { ConfigSchema, type Config } from '@agentforge/schemas';
 
 // ─── Synthetic Smoke Probe Schema ─────────────────────────────────────────────
@@ -34,7 +34,7 @@ export interface ProviderSmokeOptions {
   timeoutMs?: number;
   rootDir?: string;
   env?: Record<string, string | undefined>;
-  customProvider?: any; // For deterministic unit testing
+  customProvider?: LLMProvider; // For deterministic unit testing
 }
 
 export interface ProviderSmokeResult {
@@ -165,9 +165,10 @@ export async function runProviderSmokeTest(
       output: data,
       message: `Live provider verification successful for model "${response.modelId}" (${response.usage.latencyMs ?? elapsed}ms).`,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     const elapsed = Date.now() - start;
-    const safeError = redact(err.message ?? String(err));
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const safeError = redact(errMsg);
     smokeResult = {
       status: 'FAILED',
       live: true,
@@ -207,7 +208,9 @@ export async function runProviderSmokeTest(
       'utf8',
     );
     smokeResult.reportPath = reportPath;
-  } catch {}
+  } catch (_err) {
+    /* ignore write failure */
+  }
 
   return smokeResult;
 }

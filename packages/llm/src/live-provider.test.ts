@@ -149,7 +149,7 @@ describe('LiveHttpLLMProvider (Workstream 1)', () => {
     ).rejects.toThrow(/HTTP 429/);
   });
 
-  it('handles network timeout via AbortController', async () => {
+  it('handles network timeout via AbortController and throws LLM_TIMEOUT', async () => {
     globalThis.fetch = vi.fn().mockImplementation(async () => {
       const err = new Error('The operation was aborted');
       err.name = 'AbortError';
@@ -162,12 +162,134 @@ describe('LiveHttpLLMProvider (Workstream 1)', () => {
       timeoutMs: 10,
     });
 
-    await expect(
-      provider.call({
+    try {
+      await provider.call({
         promptVersion: 'v1',
         systemPrompt: '',
         userPrompt: '',
-      }),
-    ).rejects.toThrow(/timed out/);
+      });
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AgentForgeError);
+      expect(err.category).toBe('LLM_TIMEOUT');
+      expect(err.message).toContain('timed out after 10ms');
+    }
+  });
+
+  it('handles 500 Internal Server Error and redacts server response', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      return new Response('Internal crash on node-7: sk-live-secret-leak-999', {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    });
+
+    const provider = new LiveHttpLLMProvider({
+      apiKey: 'sk-live-key',
+      modelId: 'gpt-4o',
+    });
+
+    try {
+      await provider.call({
+        promptVersion: 'v1',
+        systemPrompt: '',
+        userPrompt: '',
+      });
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AgentForgeError);
+      expect(err.category).toBe('INTERNAL_ERROR');
+      expect(err.message).toContain('HTTP 500');
+      expect(err.message).not.toContain('sk-live-secret-leak-999');
+      expect(err.message).toContain('[REDACTED]');
+    }
+  });
+
+  it('handles malformed non-JSON response and throws LLM_INVALID_OUTPUT', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      return new Response('<html><body>502 Bad Gateway</body></html>', {
+        status: 200, // Upstream proxy returning 200 with HTML error page
+        headers: { 'Content-Type': 'text/html' },
+      });
+    });
+
+    const provider = new LiveHttpLLMProvider({
+      apiKey: 'sk-live-key',
+      modelId: 'gpt-4o',
+    });
+
+    try {
+      await provider.call({
+        promptVersion: 'v1',
+        systemPrompt: '',
+        userPrompt: '',
+      });
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AgentForgeError);
+      expect(err.category).toBe('LLM_INVALID_OUTPUT');
+      expect(err.message).toContain('Failed to parse live provider JSON response');
+    }
+  });
+
+  it('correctly normalizes baseUrl and includes customHeaders', async () => {
+    let requestedUrl = '';
+    let requestedHeaders: Record<string, string> = {};
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url, init) => {
+      requestedUrl = url.toString();
+      requestedHeaders = init.headers;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: 'test response' } }],
+          model: 'custom-model',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+
+    const provider = new LiveHttpLLMProvider({
+      apiKey: 'sk-custom-key',
+      modelId: 'custom-model',
+      baseUrl: 'https://openrouter.ai/api/v1/', // trailing slash
+      customHeaders: {
+        'HTTP-Referer': 'https://agentforge.dev',
+        'X-Title': 'AgentForge-Kickoff',
+      },
+    });
+
+    const res = await provider.call({
+      promptVersion: 'v1',
+      systemPrompt: 'System',
+      userPrompt: 'User',
+    });
+
+    expect(requestedUrl).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(requestedHeaders['HTTP-Referer']).toBe('https://agentforge.dev');
+    expect(requestedHeaders['X-Title']).toBe('AgentForge-Kickoff');
+    expect(res.content).toBe('test response');
+  });
+
+  it('handles empty choices array without runtime exceptions', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async () => {
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const provider = new LiveHttpLLMProvider({
+      apiKey: 'sk-custom-key',
+      modelId: 'custom-model',
+    });
+
+    const res = await provider.call({
+      promptVersion: 'v1',
+      systemPrompt: '',
+      userPrompt: '',
+    });
+
+    expect(res.content).toBe('');
+    expect(res.modelId).toBe('custom-model');
   });
 });

@@ -36,8 +36,8 @@ describe('BudgetGuard (FR-034)', () => {
     expect(() => guard.check()).toThrow(AgentForgeError);
     try {
       guard.check();
-    } catch (error: any) {
-      expect(error.category).toBe('BUDGET_EXCEEDED');
+    } catch (error: unknown) {
+      expect((error as AgentForgeError).category).toBe('BUDGET_EXCEEDED');
     }
   });
 

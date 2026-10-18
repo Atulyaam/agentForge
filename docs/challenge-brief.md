@@ -3,6 +3,7 @@
 > Authoritative challenge specification for HackerRank Orchestrate October '26.
 > Fill this document immediately upon receipt of the challenge email/brief at **Sat 24 Oct 2026, 18:00 IST**.
 > Reference: `AgentForge_SSOT_v5.1.md` Section 14 and Appendix D.1.
+> **Status:** PENDING_KICKOFF (Expected Sat 24 Oct 2026, 18:00 IST)
 
 ---
 

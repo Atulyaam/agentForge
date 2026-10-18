@@ -137,7 +137,55 @@ Alternatives:
 - Use heavy vendor SDKs (e.g., openai, @langchain): Rejected; adds dependency bloat and vendor lock-in.
 - Infer token counts or monetary cost from character length: Strictly rejected; dishonest metric estimation.
 Evidence:
-- `packages/llm/src/live-provider.test.ts`: 5 unit tests verifying OpenAI format, token extraction, 401 redaction, 429 rate limit, and timeout.
-- `tests/integration/provider-validation.test.ts`: 7 integration tests verifying offline `PENDING` states, missing credential handling, mock execution, isolated ground truth, and non-overwriting of canonical drill reports.
+- `packages/llm/src/live-provider.test.ts`: 9 unit tests verifying OpenAI format, token extraction, 401 redaction, 429 rate limit, 500 internal error redaction, malformed JSON, and timeout mapping.
+- `tests/integration/provider-validation.test.ts`: 9 integration tests verifying offline `PENDING` states, placeholder credentials never hitting the network, call-cap enforcement, and non-overwriting of canonical drill reports.
 - `pnpm agentforge provider-smoke` & `pnpm agentforge calibrate`: return clean `PENDING` states offline and compliant outputs with mock providers.
 Trade-offs / limits: Live tests remain `PENDING` until the operator sets a real `LLM_API_KEY`. Calibration on small samples provides operational sanity checking, not statistical benchmark validation.
+
+## ADR-033 — Readiness Gate State Accuracy, Live Provider Contract Audit, and Kickoff Rehearsal Engine   (18 Oct 2026 21:30 IST)
+Problem:
+1. **Readiness Gate False-Positive:** The readiness gate previously reported `Challenge-Specific Domain Contract: PASS` even though the official challenge brief has not been received. The old check evaluated `briefContent.length > 500` against a template file that lacked the exact string `'Paste the complete, unaltered challenge problem statement here'`, erroneously inferring that the brief had been fulfilled. Furthermore, mock drill outputs (`runs/drill-1-triage/output.json`) were accepted as official challenge deliverables.
+2. **Live Provider Contract Hardening:** `LiveHttpLLMProvider` mapped timeouts to generic `INTERNAL_ERROR` rather than canonical `LLM_TIMEOUT`, lacked `customHeaders` support for vendor proxies, and required strengthened mocked-fetch contract tests.
+3. **Kickoff Rehearsal Procedure:** The team lacked a repeatable, deterministic CLI command to rehearse the Hour 0–3 kickoff procedure from brief ingestion to packaging dry-run without fabricating official competition artifacts or claiming live performance.
+
+Decision:
+1. **Accurate Readiness Gate State Architecture:**
+   - Separated `officialBrief` (`PASS` | `PENDING`) and `officialContract` (`PASS` | `PENDING` | `FAIL`) into distinct, independent report dimensions.
+   - Implemented `inspectOfficialBrief(rootDir, customPath)`: strictly detects unfulfilled template placeholders (e.g. `[PASTE EXACT CHALLENGE TEXT`, `Challenge Brief — Template`, `PENDING_KICKOFF`) and requires confirmed problem statement (> 200 chars).
+   - Implemented `inspectOfficialContract(...)`: strictly treats mock drill schemas (`drill-1-triage`, `drill-2-rag`) as benchmark baselines, keeping the official challenge contract `PENDING` until the official brief is confirmed and a dedicated challenge adapter/validator is bound.
+   - Fail-closed submission readiness: `submissionReadiness` is strictly `BLOCKED` if either the official brief is pending, official contract is pending, or authentic transcript is missing. Local engineering health remains `PASS`.
+2. **Live Provider Contract Audit & Hardening:**
+   - Explicitly mapped `AbortError` / network timeouts to `AgentForgeError('LLM_TIMEOUT', ...)`.
+   - Added `customHeaders?: Record<string, string>` to `LiveHttpLLMProviderOptions` to support provider-specific routing headers (e.g. OpenRouter `HTTP-Referer`).
+   - Verified URL normalization (stripping trailing slashes before appending `/chat/completions`).
+   - Strengthened mocked-fetch contract tests covering: 200 OK with token extraction, 401 Unauthorized with credential redaction, 429 Rate Limited, 500 Internal Error with safe body redaction, malformed non-JSON bodies throwing `LLM_INVALID_OUTPUT`, timeout throwing `LLM_TIMEOUT`, empty choice arrays, and zero network calls when placeholder keys are configured.
+3. **Synthetic Kickoff Workflow Rehearsal Engine (`pnpm agentforge rehearsal`):**
+   - Implemented `runKickoffRehearsal` in `@agentforge/orchestrator` covering 9 structured steps:
+     1. Ingest synthetic brief with verbatim mock prompt and technical interpretation (`runs/kickoff-rehearsal/mock-brief.md`).
+     2. Identify input/output contracts, 1:1 cardinality constraints, confidence bounds, and evaluation metrics.
+     3. Select existing `support-triage` adapter with explicit architectural justification.
+     4. Execute heuristic keyword baseline on synthetic fixtures (`fixtures/drill-1-triage/tickets.json`).
+     5. Execute mock adapter pipeline with `executeRun`, persisting execution trace (`run-trace.json`), configuration snapshot, and metrics.
+     6. Independently evaluate agent output against isolated ground truth (`fixtures/drill-1-triage/tickets-expected.json`).
+     7. Validate mock output contract (10 records, <= 50 MB, 0 secrets).
+     8. Execute submission packaging in dry-run mode (`SubmissionPackager` with `dryRun: true`), verifying file collection and fail-closed transcript handling.
+     9. Generate rehearsal reports (`runs/kickoff-rehearsal/rehearsal-report.json` and `docs/kickoff-rehearsal-report.md`).
+   - All synthetic brief text, outputs, and reports are strictly labeled `[REHEARSAL MOCK DATA]`.
+   - The official brief (`docs/challenge-brief.md`) is untouched and remains `PENDING`.
+   - Canonical S6 drill reports (`docs/drill-1-report.md`, `docs/drill-2-report.md`) are never overwritten.
+   - Deterministic and zero-network: runs reliably in offline CI environments.
+
+Alternatives considered:
+- Mark challenge contract PASS based on mock drill output: Rejected; creates false sense of readiness before receiving the competition brief.
+- Invent a third mock adapter for rehearsal: Rejected; reuses existing `support-triage` adapter to test the actual kickoff procedure cleanly without bloat.
+- Fabricate synthetic transcript to pass packaging during rehearsal: Rejected; strictly violates contest rules and security policies.
+
+Evidence:
+- `tests/integration/submission-gate.test.ts`: 9 integration tests verifying mock contract vs official contract separation, missing brief blocking readiness, valid configured contract passing, missing transcript blocking readiness, and all prerequisites passing together.
+- `packages/llm/src/live-provider.test.ts`: 9 unit tests verifying complete contract for OpenAI-compatible completions, error codes, timeouts, and redaction.
+- `tests/integration/provider-validation.test.ts`: 9 integration tests verifying zero network calls for placeholder keys, 1-call smoke ceiling, and calibration isolation.
+- `tests/integration/kickoff-rehearsal.test.ts`: Integration test verifying complete 9-step rehearsal execution.
+- `pnpm agentforge rehearsal`: Succeeded with all 9 steps PASSED.
+- `pnpm agentforge readiness`: Confirms honest reporting (`Local Engineering: PASS`, `Official Brief: PENDING`, `Official Contract: PENDING`, `Deliverables: BLOCKED`).
+
+Trade-offs / limits: Final contest submission readiness remains blocked until Hour 0 brings the authentic challenge brief and human-AI conversation export. This accurately reflects real competition requirements.

@@ -40,8 +40,13 @@ AgentForge maintains separate, honest statuses across all evaluation dimensions.
 ## 3. Architecture & Operational Safeguards
 
 ### 3.1 Live Provider Adapter (`LiveHttpLLMProvider`)
-- **Zero Third-Party SDK Overhead:** Built on native Node `fetch` with standard `AbortController` timeouts (default: 30,000 ms).
-- **OpenAI-Compatible Chat Protocol:** Interoperable with OpenAI, Azure OpenAI, OpenRouter, and local OpenAI-compatible proxies (e.g. vLLM, Ollama).
+- **Zero Third-Party SDK Overhead:** Built on native Node `fetch` with standard `AbortController` timeouts (default: 30,000 ms), mapping timeout explicitly to `LLM_TIMEOUT`.
+- **OpenAI-Compatible Chat Protocol:** Interoperable with OpenAI, Azure OpenAI, OpenRouter, and local OpenAI-compatible proxies (e.g. vLLM, Ollama) that adhere to the standard `/chat/completions` payload and response contract.
+- **Vendor Compatibility & Response-Shape Constraints:**
+  - *OpenAI (`https://api.openai.com/v1`):* Fully compliant with standard bearer authentication.
+  - *OpenRouter (`https://openrouter.ai/api/v1`):* Supported via `baseUrl` normalization; supports `customHeaders` for ranking/identification (`HTTP-Referer`, `X-Title`).
+  - *Azure OpenAI / Custom Gateways:* Supported when configured to expose standard `/chat/completions` endpoints. Note: Gateways requiring custom deployment URL query parameters (`api-version=...`) must specify the full path in `baseUrl`.
+  - *Response Shape Guarantee:* The provider requires `choices[0].message.content` (string) and gracefully handles empty choices. Providers omitting `usage` will report token metrics as `'unavailable'`. Non-JSON or HTML gateway error bodies (e.g. Cloudflare 502) are safely intercepted and classified as `LLM_INVALID_OUTPUT` or `INTERNAL_ERROR` with credential redaction.
 - **Credential Protection:** Headers use `Authorization: Bearer <key>`. All error responses and log traces scrub keys matching `/sk-[a-zA-Z0-9_-]{20,}/` and other high-entropy token signatures.
 - **Accurate Token Reporting:** Directly extracts provider-reported `usage.prompt_tokens` and `usage.completion_tokens`. If the provider omits usage fields, counts are reported as `'unavailable'`—**never** guessed or converted from character counts.
 
