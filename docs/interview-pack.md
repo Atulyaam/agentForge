@@ -2,7 +2,7 @@
 
 > Authoritative reference for the HackerRank Orchestrate AI-judge interview.
 > Grounded in `AgentForge_SSOT_v5.1.md` Sections 11, 15.2, and live run evidence.
-> **Full 30-Minute Mock Interview Guide:** See [`docs/interview-rehearsal.md`](file:///C:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/docs/interview-rehearsal.md) for 8 in-depth dimensions, evidence links, follow-up questions, and rapid-fire drills.
+> **Full 30-Minute Mock Interview & Recovery Guide:** See [`docs/interview-rehearsal.md`](file:///C:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/docs/interview-rehearsal.md) for 8 in-depth dimensions, live diagnosis drills, emergency recovery playbooks (provider outages, budget exhaustion, packaging rejections), evidence links, and rapid-fire drills.
 
 ---
 

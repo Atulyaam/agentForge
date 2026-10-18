@@ -4,8 +4,11 @@
  * Safe, repeatable packaging workflow for preparing submission deliverables:
  * 1. Code Archive (.zip) with source, configs, instructions; strictly excluding
  *    secrets, build artifacts, node_modules, and raw datasets.
- * 2. Output File (validated schema, row correspondence, size check).
+ * 2. Output File (configurable validator strategy, row correspondence, size check).
  * 3. AI Session Transcript (unmodified provenance, size check).
+ *
+ * HackerRank Orchestrate Contest Rule:
+ * Each of the three submitted files (code ZIP, output, transcript) may be up to 50 MB.
  */
 
 import * as fs from 'node:fs';
@@ -13,15 +16,38 @@ import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { AgentForgeError } from '@agentforge/shared';
 
-// ─── Interfaces ───────────────────────────────────────────────────────────────
+// ─── Constants & Limits ───────────────────────────────────────────────────────
+
+/** Official HackerRank Orchestrate single-file submission ceiling (50 MB). */
+export const OFFICIAL_MAX_FILE_SIZE_MB = 50;
+
+/** Exact byte limit: 50 MiB = 52,428,800 bytes. */
+export const OFFICIAL_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
+// ─── Interfaces & Strategies ──────────────────────────────────────────────────
+
+export type OutputValidatorFn = (
+  content: string,
+  filePath: string,
+) => { valid: boolean; errors: string[] };
+
+export type OutputValidatorStrategy =
+  | 'json'
+  | 'jsonl'
+  | 'csv'
+  | 'text'
+  | 'any'
+  | OutputValidatorFn;
 
 export interface PackagingOptions {
   rootDir?: string;
   outputFile?: string;
   transcriptFile?: string;
   archiveOutPath?: string;
-  maxFileSizeMb?: number;
-  maxArchiveSizeMb?: number;
+  maxFileSizeMb?: number;      // Default: 50 MB
+  maxArchiveSizeMb?: number;   // Default: 50 MB (matches HackerRank 50 MB limit)
+  contestMode?: boolean;       // Default: true (prohibits limits > 50 MB)
+  outputFormat?: OutputValidatorStrategy; // Default: 'json'
   excludeDatasets?: boolean;
   customExclusions?: string[];
   dryRun?: boolean;
@@ -33,9 +59,11 @@ export interface ArtifactValidationResult {
   exists: boolean;
   sizeBytes: number;
   sizeMb: number;
+  maxSizeBytes: number;
   maxSizeMb: number;
   validSize: boolean;
   validContent: boolean;
+  isUnreadable?: boolean;
   errors: string[];
 }
 
@@ -91,6 +119,9 @@ export const DEFAULT_EXCLUSION_RULES: Array<{ pattern: RegExp; reason: string }>
   { pattern: /(^|[\\/])\.env(\.[a-zA-Z0-9]+)?$/, reason: 'Environment credentials and local secrets' },
   { pattern: /\.tsbuildinfo$/, reason: 'Incremental TypeScript compiler state' },
   { pattern: /(^|[\\/])\.DS_Store$/, reason: 'OS metadata file' },
+  { pattern: /(^|[\\/])Thumbs\.db$/, reason: 'OS thumbnail cache' },
+  { pattern: /\.(pem|key)$/, reason: 'Cryptographic certificates and private keys' },
+  { pattern: /(^|[\\/])id_rsa([._-].*)?$/, reason: 'SSH private key file' },
 ];
 
 export const RAW_DATASET_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
@@ -238,20 +269,44 @@ export class SubmissionPackager {
   private readonly rootDir: string;
   private readonly maxFileSizeMb: number;
   private readonly maxArchiveSizeMb: number;
+  private readonly contestMode: boolean;
+  private readonly outputFormat: OutputValidatorStrategy;
 
-  constructor(rootDir = process.cwd(), maxFileSizeMb = 50, maxArchiveSizeMb = 100) {
+  constructor(
+    rootDir = process.cwd(),
+    maxFileSizeMb = OFFICIAL_MAX_FILE_SIZE_MB,
+    maxArchiveSizeMb = OFFICIAL_MAX_FILE_SIZE_MB,
+    contestMode = true,
+    outputFormat: OutputValidatorStrategy = 'json',
+  ) {
     this.rootDir = path.resolve(rootDir);
+    this.contestMode = contestMode;
+    this.outputFormat = outputFormat;
+
+    // Prevent silent contest disqualification by enforcing the 50 MB ceiling
+    if (this.contestMode) {
+      if (maxFileSizeMb > OFFICIAL_MAX_FILE_SIZE_MB || maxArchiveSizeMb > OFFICIAL_MAX_FILE_SIZE_MB) {
+        throw new AgentForgeError(
+          'CONFIG_INVALID',
+          `Configured size limit (${Math.max(maxFileSizeMb, maxArchiveSizeMb)} MB) exceeds official contest ceiling of ${OFFICIAL_MAX_FILE_SIZE_MB} MB. In contest mode, submission files cannot exceed 50 MB.`,
+        );
+      }
+    }
+
     this.maxFileSizeMb = maxFileSizeMb;
     this.maxArchiveSizeMb = maxArchiveSizeMb;
   }
 
-  /** Validate a single standalone artifact (e.g. output.json or transcript). */
+  /** Validate a single standalone artifact (output file, transcript, etc.). */
   validateArtifact(
     filePath: string,
     name: string,
-    isJson = false,
+    strategy: OutputValidatorStrategy = 'any',
+    customMaxMb?: number,
   ): ArtifactValidationResult {
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.rootDir, filePath);
+    const effectiveMaxMb = customMaxMb ?? this.maxFileSizeMb;
+    const maxSizeBytes = Math.floor(effectiveMaxMb * 1024 * 1024);
     const errors: string[] = [];
 
     if (!fs.existsSync(resolvedPath)) {
@@ -261,36 +316,134 @@ export class SubmissionPackager {
         exists: false,
         sizeBytes: 0,
         sizeMb: 0,
-        maxSizeMb: this.maxFileSizeMb,
+        maxSizeBytes,
+        maxSizeMb: effectiveMaxMb,
         validSize: false,
         validContent: false,
         errors: [`File does not exist: ${resolvedPath}`],
       };
     }
 
-    const stat = fs.statSync(resolvedPath);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(resolvedPath);
+    } catch (err: any) {
+      return {
+        name,
+        path: resolvedPath,
+        exists: true,
+        sizeBytes: 0,
+        sizeMb: 0,
+        maxSizeBytes,
+        maxSizeMb: effectiveMaxMb,
+        validSize: false,
+        validContent: false,
+        isUnreadable: true,
+        errors: [`File is unreadable: ${err.message}`],
+      };
+    }
+
     const sizeBytes = stat.size;
     const sizeMb = sizeBytes / (1024 * 1024);
-    const validSize = sizeMb <= this.maxFileSizeMb;
+    const validSize = sizeBytes <= maxSizeBytes;
 
     if (!validSize) {
-      errors.push(`File size (${sizeMb.toFixed(2)} MB) exceeds limit of ${this.maxFileSizeMb} MB`);
+      errors.push(
+        `File size (${sizeBytes} bytes / ${sizeMb.toFixed(2)} MB) exceeds limit of ${maxSizeBytes} bytes / ${effectiveMaxMb} MB`,
+      );
     }
 
     let validContent = true;
-    if (isJson) {
+    let rawContent: string;
+    try {
+      rawContent = fs.readFileSync(resolvedPath, 'utf8');
+    } catch (err: any) {
+      validContent = false;
+      errors.push(`File content cannot be read: ${err.message}`);
+      return {
+        name,
+        path: resolvedPath,
+        exists: true,
+        sizeBytes,
+        sizeMb: Number(sizeMb.toFixed(3)),
+        maxSizeBytes,
+        maxSizeMb: effectiveMaxMb,
+        validSize,
+        validContent: false,
+        isUnreadable: true,
+        errors,
+      };
+    }
+
+    // Apply validation strategy (with backward-compatible boolean support)
+    const effectiveStrategy: OutputValidatorStrategy = typeof strategy === 'boolean'
+      ? ((strategy as boolean) ? 'json' : 'any')
+      : strategy;
+
+    if (typeof effectiveStrategy === 'function') {
       try {
-        const raw = fs.readFileSync(resolvedPath, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length === 0) {
-          errors.push('Output JSON array is empty');
+        const res = effectiveStrategy(rawContent, resolvedPath);
+        if (!res.valid) {
           validContent = false;
+          errors.push(...res.errors);
+        }
+      } catch (err: any) {
+        validContent = false;
+        errors.push(`Custom output validator failed: ${err.message}`);
+      }
+    } else if (effectiveStrategy === 'json') {
+      try {
+        if (rawContent.trim().length === 0) {
+          errors.push('Output JSON file is empty');
+          validContent = false;
+        } else {
+          const parsed = JSON.parse(rawContent);
+          if (Array.isArray(parsed) && parsed.length === 0) {
+            errors.push('Output JSON array is empty');
+            validContent = false;
+          } else if (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            !Array.isArray(parsed) &&
+            Object.keys(parsed).length === 0
+          ) {
+            errors.push('Output JSON object is empty');
+            validContent = false;
+          }
         }
       } catch (err: any) {
         errors.push(`Invalid JSON format: ${err.message}`);
         validContent = false;
       }
+    } else if (effectiveStrategy === 'jsonl') {
+      const lines = rawContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length === 0) {
+        errors.push('Output JSONL file has no records');
+        validContent = false;
+      } else {
+        for (let idx = 0; idx < lines.length; idx++) {
+          try {
+            JSON.parse(lines[idx]);
+          } catch (err: any) {
+            errors.push(`Invalid JSON at line ${idx + 1}: ${err.message}`);
+            validContent = false;
+            break;
+          }
+        }
+      }
+    } else if (effectiveStrategy === 'csv') {
+      const lines = rawContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length < 2) {
+        errors.push('Output CSV must contain at least a header row and 1 data row');
+        validContent = false;
+      }
+    } else if (effectiveStrategy === 'text') {
+      if (rawContent.trim().length === 0) {
+        errors.push('Output text file is empty');
+        validContent = false;
+      }
     } else {
+      // 'any' strategy: verify file exists and is non-empty
       if (sizeBytes === 0) {
         errors.push('Artifact file is empty (0 bytes)');
         validContent = false;
@@ -303,7 +456,8 @@ export class SubmissionPackager {
       exists: true,
       sizeBytes,
       sizeMb: Number(sizeMb.toFixed(3)),
-      maxSizeMb: this.maxFileSizeMb,
+      maxSizeBytes,
+      maxSizeMb: effectiveMaxMb,
       validSize,
       validContent,
       errors,
@@ -372,16 +526,17 @@ export class SubmissionPackager {
     const dryRun = options.dryRun ?? false;
     const excludeDatasets = options.excludeDatasets ?? true;
     const customExclusions = options.customExclusions ?? [];
+    const outputFormat = options.outputFormat ?? this.outputFormat;
 
     const validationErrors: string[] = [];
 
-    // 1. Validate standalone output and transcript artifacts
-    const outputValidation = this.validateArtifact(outputFile, 'Output File', true);
+    // 1. FAST PRE-CHECKS: Validate standalone output and transcript artifacts BEFORE any archive work
+    const outputValidation = this.validateArtifact(outputFile, 'Output File', outputFormat, this.maxFileSizeMb);
     if (!outputValidation.validSize || !outputValidation.validContent || !outputValidation.exists) {
       validationErrors.push(...outputValidation.errors);
     }
 
-    const transcriptValidation = this.validateArtifact(transcriptFile, 'AI Session Transcript', false);
+    const transcriptValidation = this.validateArtifact(transcriptFile, 'AI Session Transcript', 'any', this.maxFileSizeMb);
     if (!transcriptValidation.validSize || !transcriptValidation.validContent || !transcriptValidation.exists) {
       validationErrors.push(...transcriptValidation.errors);
     }
@@ -413,31 +568,48 @@ export class SubmissionPackager {
     }
 
     const totalUncompressedBytes = included.reduce((sum, f) => sum + f.sizeBytes, 0);
+    const maxArchiveSizeBytes = Math.floor(this.maxArchiveSizeMb * 1024 * 1024);
 
-    // 4. Validate or build the Code ZIP Archive
+    // 4. Pre-archive check: if raw uncompressed bytes alone are grossly beyond reasonable zip limit, fail fast
+    if (totalUncompressedBytes > maxArchiveSizeBytes * 4) {
+      validationErrors.push(
+        `Total uncompressed project size (${(totalUncompressedBytes / (1024 * 1024)).toFixed(2)} MB) grossly exceeds safe packaging budget. Check for unexcluded large data.`,
+      );
+    }
+
+    // 5. Fail closed BEFORE expensive compression if any pre-checks failed
+    if (!dryRun && validationErrors.length > 0) {
+      throw new AgentForgeError(
+        'OUTPUT_INVALID',
+        `Packaging failed closed before archiving due to ${validationErrors.length} security/validation error(s): ${validationErrors.join('; ')}`,
+      );
+    }
+
+    // 6. Validate or build the Code ZIP Archive
     let archiveValidation: ArtifactValidationResult;
 
     if (dryRun) {
-      const estimatedZipMb = totalUncompressedBytes / (1024 * 1024) * 0.35; // conservative estimate
+      const estimatedZipBytes = Math.floor(totalUncompressedBytes * 0.35);
+      const estimatedZipMb = Number((estimatedZipBytes / (1024 * 1024)).toFixed(2));
+      const validSize = estimatedZipBytes <= maxArchiveSizeBytes;
+
       archiveValidation = {
         name: 'Code Archive (Dry-Run Estimate)',
         path: archiveOutPath,
         exists: false,
-        sizeBytes: totalUncompressedBytes,
-        sizeMb: Number(estimatedZipMb.toFixed(2)),
+        sizeBytes: estimatedZipBytes,
+        sizeMb: estimatedZipMb,
+        maxSizeBytes: maxArchiveSizeBytes,
         maxSizeMb: this.maxArchiveSizeMb,
-        validSize: estimatedZipMb <= this.maxArchiveSizeMb,
+        validSize,
         validContent: true,
-        errors: [],
+        errors: validSize ? [] : [`Estimated archive size (${estimatedZipMb} MB) exceeds ${this.maxArchiveSizeMb} MB limit`],
       };
-    } else {
-      if (validationErrors.length > 0) {
-        throw new AgentForgeError(
-          'OUTPUT_INVALID',
-          `Packaging failed closed due to ${validationErrors.length} security/validation error(s): ${validationErrors.join('; ')}`,
-        );
-      }
 
+      if (!validSize) {
+        validationErrors.push(...archiveValidation.errors);
+      }
+    } else {
       // Read buffers and generate ZIP
       const fileBuffers = included.map((f) => ({
         relativePath: f.relPath,
@@ -445,12 +617,20 @@ export class SubmissionPackager {
       }));
 
       const zipBuffer = createZipArchive(fileBuffers);
-      const zipSizeMb = zipBuffer.length / (1024 * 1024);
+      const zipSizeBytes = zipBuffer.length;
+      const zipSizeMb = Number((zipSizeBytes / (1024 * 1024)).toFixed(2));
+      const validSize = zipSizeBytes <= maxArchiveSizeBytes;
 
       // Ensure destination directory exists
       const targetDir = path.dirname(archiveOutPath);
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
+      }
+
+      if (!validSize) {
+        const errorMsg = `Generated archive size (${zipSizeBytes} bytes / ${zipSizeMb} MB) exceeds official limit of ${maxArchiveSizeBytes} bytes / ${this.maxArchiveSizeMb} MB`;
+        validationErrors.push(errorMsg);
+        throw new AgentForgeError('OUTPUT_INVALID', errorMsg);
       }
 
       fs.writeFileSync(archiveOutPath, zipBuffer);
@@ -459,19 +639,14 @@ export class SubmissionPackager {
         name: 'Code Archive (.zip)',
         path: archiveOutPath,
         exists: true,
-        sizeBytes: zipBuffer.length,
-        sizeMb: Number(zipSizeMb.toFixed(2)),
+        sizeBytes: zipSizeBytes,
+        sizeMb: zipSizeMb,
+        maxSizeBytes: maxArchiveSizeBytes,
         maxSizeMb: this.maxArchiveSizeMb,
-        validSize: zipSizeMb <= this.maxArchiveSizeMb,
+        validSize: true,
         validContent: true,
-        errors: zipSizeMb > this.maxArchiveSizeMb
-          ? [`Archive size (${zipSizeMb.toFixed(2)} MB) exceeds limit of ${this.maxArchiveSizeMb} MB`]
-          : [],
+        errors: [],
       };
-
-      if (!archiveValidation.validSize) {
-        validationErrors.push(...archiveValidation.errors);
-      }
     }
 
     const safeToPackage = validationErrors.length === 0;

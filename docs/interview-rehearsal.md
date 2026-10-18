@@ -164,3 +164,57 @@
 | 3 | *"How do you know your output didn't hallucinate dates or prices?"* | *"In our RAG adapter, answers are only allowed if supporting chunk IDs are cited and verified by the independent evaluator. Answers claiming groundedness with zero valid citations are forced to abstain."* |
 | 4 | *"How did you verify your submission package is safe?"* | *"We built an automated packaging validator (`pnpm agentforge package --dry-run`) that scans all candidate files for credentials and API keys, strictly excludes `node_modules` and `.env`, and verifies size limits before building the ZIP."* |
 | 5 | *"How did you use AI in this project?"* | *"AI was used as a pair programmer under our strict AI Build Protocol (SSOT Section 13). Every sprint was scoped to specific requirements; all generated diffs were reviewed, verified against tests, and logged in our immutable transcript vault."* |
+| 6 | *"What if the submission platform has a strict 50 MB limit?"* | *"Our packager enforces the official HackerRank Orchestrate 50 MB ceiling uniformly across Code ZIP, Output file, and AI Transcript. Boundary tests verify exact byte thresholds, and packaging fails closed if any deliverable exceeds 50 MB."* |
+
+---
+
+## 4. Live Troubleshooting & Diagnosis Drill
+
+In a live technical interview, judges frequently request: *"Show me what happens when a record fails, or simulate a malformed response."*
+
+### 4.1 Diagnosis Workflow (4 Steps)
+1. **Trace Isolation**:
+   - Open `runs/<runId>/trace.jsonl` or navigate to `http://localhost:3000/runs/<runId>` in the Web Viewer.
+   - Filter for `record_error`, `schema_correction_failed`, or `output_validation_failed` events.
+2. **Error Taxonomy Categorization**:
+   - Inspect the `category` attribute according to SSOT Section 4.5:
+     - `SCHEMA_INVALID`: Model output failed Zod schema parsing.
+     - `LLM_RATE_LIMITED` / `LLM_TIMEOUT`: Transient upstream provider issue.
+     - `POLICY_VIOLATION`: Code-level gate blocked unsafe action.
+     - `BUDGET_EXHAUSTED`: Run hit token or financial threshold.
+3. **Inspect Raw vs Corrected Payloads**:
+   - Check `trace.jsonl` payload for the exact unparsed string and the schema correction attempt.
+   - Evidence: In [`packages/llm/src/index.ts`](file:///c:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/packages/llm/src/index.ts), `callStructured` captures `rawOutput` and `zodErrors`.
+4. **Independent Failure Clustering**:
+   - Run `pnpm agentforge eval --baseline` or `clusterFailuresByFeatures` to group errors by input length, category, or vocabulary pattern in [`docs/failure-analysis.md`](file:///c:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/docs/failure-analysis.md).
+
+---
+
+## 5. Emergency Recovery Playbooks
+
+### Playbook A: Provider Outage or Rate Limit Flurry (429 / 500 / 503)
+- **Symptom**: Model calls hang or return HTTP 429 rate limit exceptions.
+- **Immediate Action**:
+  1. In-process retries with exponential backoff (`backoffMs`: 1s, 2s) trigger automatically up to `MAX_TRANSIENT_RETRIES` (2).
+  2. If upstream stays unresponsive, the orchestrator writes a clean checkpoint to `runs/<runId>/checkpoint.jsonl` with all passed rows saved.
+  3. Swap model provider in `.env` (e.g. switch `LLM_PROVIDER=gemini` or change `LLM_MODEL`).
+  4. Run `pnpm agentforge run --input <path> --resume <runId>`. The orchestrator loads the checkpoint, skips processed rows, and completes remaining rows. Zero lost work.
+- **Code Evidence**: [`packages/orchestrator/src/index.ts#L325-L338`](file:///c:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/packages/orchestrator/src/index.ts#L325-L338).
+
+### Playbook B: Token or Latency Budget Exhaustion
+- **Symptom**: `BudgetGuard` aborts run with `AgentForgeError('BUDGET_EXHAUSTED')`.
+- **Immediate Action**:
+  1. Inspect `runs/<runId>/metrics.json` for total token count and calls.
+  2. Reduce batch concurrency or chunk size: adjust `BATCH_CONCURRENCY=2` or lower `MAX_INPUT_CHARS`.
+  3. Switch to `--sample 5` to isolate the highest-density records and calibrate token burn.
+  4. Optimize prompt: eliminate preamble, shorten system instructions, or use compact schema keys.
+- **Code Evidence**: [`packages/llm/src/index.ts#L60-L95`](file:///c:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/packages/llm/src/index.ts#L60-L95).
+
+### Playbook C: Packaging Rejection or Size Limit Breach
+- **Symptom**: `pnpm agentforge package` fails closed with secret leak error or file size violation (> 50 MB).
+- **Immediate Action**:
+  1. Inspect generated `runs/packaging-manifest.json` for exact list of `validationErrors`.
+  2. If secret detected: locate the file and line indicated in `secretScan.violations`, remove hardcoded secret, and re-run secret scan.
+  3. If archive size > 50 MB: check for unexcluded raw datasets or test caches. Pass `--custom-exclude <pattern>` or confirm raw datasets are excluded via `--exclude-datasets`.
+  4. If output format is rejected: use `--output-format [json|jsonl|csv|text|any]` matching the challenge contract.
+- **Code Evidence**: [`packages/orchestrator/src/packaging.ts`](file:///c:/Users/Atul2/OneDrive/Desktop/Hackethon/agentforge/packages/orchestrator/src/packaging.ts).

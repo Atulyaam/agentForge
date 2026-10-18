@@ -1,15 +1,19 @@
 /**
- * Integration Tests for Submission Packaging Validator (Workstream 2)
+ * Integration Tests for Submission Packaging Validator (Workstream 1 & 2)
  *
  * Verifies:
- * - Artifact path validation & size limit enforcement
- * - Archive exclusions (node_modules, dist, .env, runs, raw datasets)
+ * - Uniform 50 MB limits aligned with HackerRank Orchestrate rules
+ * - Boundary conditions (compliant, exactly at limit, 1 byte over limit, missing, unreadable)
+ * - Contest mode enforcement preventing silent over-limit disqualifications
+ * - Pluggable output format validators (JSON, JSONL, CSV, Text, Any, Custom function)
+ * - Pre-archive fast-failure prior to expensive zip deflation
+ * - Archive exclusions (node_modules, dist, .next, runs, raw datasets)
  * - Secret detection and fail-closed security behavior
  * - Pure TypeScript ZIP archive generation & CRC32 integrity
  * - Dry-run mode manifest inspection without writing files
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -18,9 +22,12 @@ import {
   scanBufferForSecrets,
   computeCrc32,
   createZipArchive,
+  OFFICIAL_MAX_FILE_SIZE_MB,
+  OFFICIAL_MAX_FILE_SIZE_BYTES,
 } from '@agentforge/orchestrator';
+import { AgentForgeError } from '@agentforge/shared';
 
-describe('Submission Packaging Validator — Workstream 2', () => {
+describe('Submission Packaging Validator & Compliance', () => {
   let tempDir: string;
 
   beforeEach(() => {
@@ -33,64 +40,237 @@ describe('Submission Packaging Validator — Workstream 2', () => {
     } catch {}
   });
 
-  describe('Artifact Validation & Size Limits', () => {
-    it('validates existing non-empty file within size limits', () => {
-      const filePath = path.join(tempDir, 'valid.json');
-      fs.writeFileSync(filePath, JSON.stringify([{ id: 'rec-1', text: 'ok' }]));
+  describe('Official 50 MB Limits & Contest Mode Enforcement', () => {
+    it('defaults to 50 MB for both artifact and archive limits', () => {
+      const packager = new SubmissionPackager(tempDir);
+      expect(OFFICIAL_MAX_FILE_SIZE_MB).toBe(50);
+      expect(OFFICIAL_MAX_FILE_SIZE_BYTES).toBe(52428800);
+      // Validating a 100-byte file against defaults
+      const filePath = path.join(tempDir, 'sample.txt');
+      fs.writeFileSync(filePath, 'AgentForge verification');
+      const res = packager.validateArtifact(filePath, 'Test File');
+      expect(res.maxSizeMb).toBe(50);
+      expect(res.maxSizeBytes).toBe(52428800);
+    });
 
-      const packager = new SubmissionPackager(tempDir, 10, 50);
-      const res = packager.validateArtifact(filePath, 'Test JSON', true);
+    it('enforces contest mode by rejecting configurations > 50 MB with CONFIG_INVALID', () => {
+      expect(() => {
+        new SubmissionPackager(tempDir, 51, 50, true);
+      }).toThrowError(/exceeds official contest ceiling/);
+
+      expect(() => {
+        new SubmissionPackager(tempDir, 50, 100, true);
+      }).toThrowError(/exceeds official contest ceiling/);
+    });
+
+    it('allows customized limits when contestMode is explicitly false', () => {
+      const packager = new SubmissionPackager(tempDir, 100, 200, false);
+      const filePath = path.join(tempDir, 'sample.txt');
+      fs.writeFileSync(filePath, 'Relaxed limits test');
+      const res = packager.validateArtifact(filePath, 'Test File');
+      expect(res.maxSizeMb).toBe(100);
+    });
+  });
+
+  describe('Exact Byte Boundary Tests', () => {
+    it('passes for compliant file strictly below limit', () => {
+      // 0.001 MB limit = 1048 bytes
+      const testLimitMb = 0.001;
+      const maxBytes = Math.floor(testLimitMb * 1024 * 1024); // 1048 bytes
+      const compliantBytes = maxBytes - 100;
+
+      const filePath = path.join(tempDir, 'compliant.bin');
+      fs.writeFileSync(filePath, Buffer.alloc(compliantBytes, 0x42));
+
+      const packager = new SubmissionPackager(tempDir, testLimitMb, testLimitMb, false);
+      const res = packager.validateArtifact(filePath, 'Compliant', 'any');
 
       expect(res.exists).toBe(true);
+      expect(res.sizeBytes).toBe(compliantBytes);
       expect(res.validSize).toBe(true);
-      expect(res.validContent).toBe(true);
       expect(res.errors).toHaveLength(0);
     });
 
+    it('passes for file exactly at the configured byte limit', () => {
+      const testLimitMb = 0.001; // 1048 bytes
+      const maxBytes = Math.floor(testLimitMb * 1024 * 1024);
+
+      const filePath = path.join(tempDir, 'exact-boundary.bin');
+      fs.writeFileSync(filePath, Buffer.alloc(maxBytes, 0x42));
+
+      const packager = new SubmissionPackager(tempDir, testLimitMb, testLimitMb, false);
+      const res = packager.validateArtifact(filePath, 'Exact Boundary', 'any');
+
+      expect(res.exists).toBe(true);
+      expect(res.sizeBytes).toBe(maxBytes);
+      expect(res.validSize).toBe(true);
+      expect(res.errors).toHaveLength(0);
+    });
+
+    it('fails for file exactly 1 byte over the configured byte limit', () => {
+      const testLimitMb = 0.001; // 1048 bytes
+      const maxBytes = Math.floor(testLimitMb * 1024 * 1024);
+      const overBytes = maxBytes + 1;
+
+      const filePath = path.join(tempDir, 'over-boundary.bin');
+      fs.writeFileSync(filePath, Buffer.alloc(overBytes, 0x42));
+
+      const packager = new SubmissionPackager(tempDir, testLimitMb, testLimitMb, false);
+      const res = packager.validateArtifact(filePath, 'Over Boundary', 'any');
+
+      expect(res.exists).toBe(true);
+      expect(res.sizeBytes).toBe(overBytes);
+      expect(res.validSize).toBe(false);
+      expect(res.errors[0]).toContain('exceeds limit');
+    });
+
     it('fails when artifact does not exist', () => {
-      const filePath = path.join(tempDir, 'missing.json');
-      const packager = new SubmissionPackager(tempDir, 10, 50);
-      const res = packager.validateArtifact(filePath, 'Missing File', true);
+      const filePath = path.join(tempDir, 'nonexistent-artifact.json');
+      const packager = new SubmissionPackager(tempDir, 10, 10);
+      const res = packager.validateArtifact(filePath, 'Missing File', 'any');
 
       expect(res.exists).toBe(false);
+      expect(res.validSize).toBe(false);
       expect(res.errors[0]).toContain('does not exist');
     });
 
-    it('fails when output file contains invalid JSON', () => {
-      const filePath = path.join(tempDir, 'corrupt.json');
-      fs.writeFileSync(filePath, '{ invalid json');
+    it('handles unreadable files gracefully and marks invalid', () => {
+      const dirAsFilePath = path.join(tempDir, 'unreadable-dir');
+      fs.mkdirSync(dirAsFilePath);
 
-      const packager = new SubmissionPackager(tempDir, 10, 50);
-      const res = packager.validateArtifact(filePath, 'Corrupt Output', true);
+      const packager = new SubmissionPackager(tempDir, 10, 10);
+      const res = packager.validateArtifact(dirAsFilePath, 'Locked File', 'json');
 
       expect(res.exists).toBe(true);
       expect(res.validContent).toBe(false);
-      expect(res.errors[0]).toContain('Invalid JSON format');
+      expect(res.isUnreadable).toBe(true);
+      expect(res.errors[0]).toContain('cannot be read');
+    });
+  });
+
+  describe('Configurable Output Validator Strategies', () => {
+    it('validates JSON output (valid, corrupt, empty)', () => {
+      const packager = new SubmissionPackager(tempDir, 10, 10);
+
+      const validPath = path.join(tempDir, 'valid.json');
+      fs.writeFileSync(validPath, JSON.stringify([{ id: '1', result: 'ok' }]));
+      expect(packager.validateArtifact(validPath, 'Out', 'json').validContent).toBe(true);
+
+      const corruptPath = path.join(tempDir, 'corrupt.json');
+      fs.writeFileSync(corruptPath, '{ corrupt json');
+      const corruptRes = packager.validateArtifact(corruptPath, 'Out', 'json');
+      expect(corruptRes.validContent).toBe(false);
+      expect(corruptRes.errors[0]).toContain('Invalid JSON format');
+
+      const emptyPath = path.join(tempDir, 'empty.json');
+      fs.writeFileSync(emptyPath, '[]');
+      const emptyRes = packager.validateArtifact(emptyPath, 'Out', 'json');
+      expect(emptyRes.validContent).toBe(false);
+      expect(emptyRes.errors[0]).toContain('Output JSON array is empty');
     });
 
-    it('fails when output JSON array is empty', () => {
-      const filePath = path.join(tempDir, 'empty.json');
-      fs.writeFileSync(filePath, '[]');
+    it('validates JSONL output strategy', () => {
+      const packager = new SubmissionPackager(tempDir, 10, 10);
 
-      const packager = new SubmissionPackager(tempDir, 10, 50);
-      const res = packager.validateArtifact(filePath, 'Empty Output', true);
+      const validJsonl = path.join(tempDir, 'valid.jsonl');
+      fs.writeFileSync(validJsonl, '{"id":1}\n{"id":2}\n');
+      expect(packager.validateArtifact(validJsonl, 'Out', 'jsonl').validContent).toBe(true);
 
+      const corruptJsonl = path.join(tempDir, 'corrupt.jsonl');
+      fs.writeFileSync(corruptJsonl, '{"id":1}\n{bad json}\n');
+      const res = packager.validateArtifact(corruptJsonl, 'Out', 'jsonl');
       expect(res.validContent).toBe(false);
-      expect(res.errors[0]).toContain('Output JSON array is empty');
+      expect(res.errors[0]).toContain('Invalid JSON at line 2');
     });
 
-    it('enforces maximum per-file size limit', () => {
-      const filePath = path.join(tempDir, 'large.txt');
-      // Create a 2 MB file with limit of 1 MB
-      const largeBuf = Buffer.alloc(2 * 1024 * 1024, 'A');
-      fs.writeFileSync(filePath, largeBuf);
+    it('validates CSV output strategy', () => {
+      const packager = new SubmissionPackager(tempDir, 10, 10);
 
-      const packager = new SubmissionPackager(tempDir, 1.0, 50);
-      const res = packager.validateArtifact(filePath, 'Large File', false);
+      const validCsv = path.join(tempDir, 'valid.csv');
+      fs.writeFileSync(validCsv, 'id,category,priority\n1,billing,P1\n');
+      expect(packager.validateArtifact(validCsv, 'Out', 'csv').validContent).toBe(true);
 
-      expect(res.exists).toBe(true);
-      expect(res.validSize).toBe(false);
-      expect(res.errors[0]).toContain('exceeds limit');
+      const headerOnlyCsv = path.join(tempDir, 'header-only.csv');
+      fs.writeFileSync(headerOnlyCsv, 'id,category,priority\n');
+      const res = packager.validateArtifact(headerOnlyCsv, 'Out', 'csv');
+      expect(res.validContent).toBe(false);
+      expect(res.errors[0]).toContain('must contain at least a header row and 1 data row');
+    });
+
+    it('validates plain text output strategy', () => {
+      const packager = new SubmissionPackager(tempDir, 10, 10);
+
+      const validText = path.join(tempDir, 'valid.txt');
+      fs.writeFileSync(validText, 'Predicted output summary\n');
+      expect(packager.validateArtifact(validText, 'Out', 'text').validContent).toBe(true);
+
+      const emptyText = path.join(tempDir, 'empty.txt');
+      fs.writeFileSync(emptyText, '   \n\t  ');
+      const res = packager.validateArtifact(emptyText, 'Out', 'text');
+      expect(res.validContent).toBe(false);
+      expect(res.errors[0]).toContain('Output text file is empty');
+    });
+
+    it('supports custom function validator strategy', () => {
+      const packager = new SubmissionPackager(tempDir, 10, 10);
+      const customPath = path.join(tempDir, 'custom.tsv');
+      fs.writeFileSync(customPath, 'COL_A\tCOL_B\nval1\tval2\n');
+
+      const customValidator = (content: string) => {
+        const lines = content.trim().split('\n');
+        return {
+          valid: lines.length >= 2 && lines[0].includes('\t'),
+          errors: lines.length < 2 ? ['Need at least 2 TSV rows'] : [],
+        };
+      };
+
+      const res = packager.validateArtifact(customPath, 'TSV Out', customValidator);
+      expect(res.validContent).toBe(true);
+    });
+  });
+
+  describe('Pre-Archive Fast Failure & Fail-Closed Guard', () => {
+    it('aborts early before archive compression when output file is missing or invalid', async () => {
+      fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
+      const transMd = path.join(tempDir, 'transcript.md');
+      fs.writeFileSync(transMd, '# Authentic Conversation Log');
+      const targetZip = path.join(tempDir, 'dist', 'submission.zip');
+
+      const packager = new SubmissionPackager(tempDir, 50, 50);
+
+      // Point to nonexistent output file
+      await expect(
+        packager.packageSubmission({
+          outputFile: path.join(tempDir, 'nonexistent.json'),
+          transcriptFile: transMd,
+          archiveOutPath: targetZip,
+          dryRun: false,
+        }),
+      ).rejects.toThrow(/Packaging failed closed before archiving/);
+
+      // Verify no archive was generated
+      expect(fs.existsSync(targetZip)).toBe(false);
+    });
+
+    it('aborts early before archive compression when transcript file is missing or empty', async () => {
+      fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
+      const outJson = path.join(tempDir, 'out.json');
+      fs.writeFileSync(outJson, JSON.stringify([{ id: '1' }]));
+      const targetZip = path.join(tempDir, 'dist', 'submission.zip');
+
+      const packager = new SubmissionPackager(tempDir, 50, 50);
+
+      // Point to nonexistent transcript file
+      await expect(
+        packager.packageSubmission({
+          outputFile: outJson,
+          transcriptFile: path.join(tempDir, 'missing-transcript.md'),
+          archiveOutPath: targetZip,
+          dryRun: false,
+        }),
+      ).rejects.toThrow(/Packaging failed closed before archiving/);
+
+      expect(fs.existsSync(targetZip)).toBe(false);
     });
   });
 
@@ -115,7 +295,7 @@ describe('Submission Packaging Validator — Workstream 2', () => {
       fs.writeFileSync(path.join(tempDir, 'build.tsbuildinfo'), 'info');
       fs.writeFileSync(path.join(tempDir, 'fixtures', 'challenge', 'raw', 'large-corpus.csv'), 'corpus');
 
-      const packager = new SubmissionPackager(tempDir, 50, 100);
+      const packager = new SubmissionPackager(tempDir, 50, 50);
       const { included, excluded } = packager.collectFiles(tempDir, true);
 
       const includedRelPaths = included.map((f) => f.relPath.replace(/\\/g, '/'));
@@ -166,7 +346,7 @@ describe('Submission Packaging Validator — Workstream 2', () => {
       const transMd = path.join(tempDir, 'transcript.md');
       fs.writeFileSync(transMd, '# Transcript');
 
-      const packager = new SubmissionPackager(tempDir, 50, 100);
+      const packager = new SubmissionPackager(tempDir, 50, 50);
 
       // In non-dry-run mode, must throw AgentForgeError
       await expect(
@@ -214,7 +394,7 @@ describe('Submission Packaging Validator — Workstream 2', () => {
       fs.writeFileSync(transMd, '# Transcript');
       const targetZip = path.join(tempDir, 'dist', 'submission.zip');
 
-      const packager = new SubmissionPackager(tempDir, 50, 100);
+      const packager = new SubmissionPackager(tempDir, 50, 50);
       const manifest = await packager.packageSubmission({
         outputFile: outJson,
         transcriptFile: transMd,
@@ -232,7 +412,7 @@ describe('Submission Packaging Validator — Workstream 2', () => {
       expect(fs.existsSync(targetZip)).toBe(false);
     });
 
-    it('generates real submission ZIP on clean project tree', async () => {
+    it('generates real submission ZIP on clean project tree within 50 MB limit', async () => {
       fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
       fs.writeFileSync(path.join(tempDir, 'README.md'), '# Clean Project');
       const outJson = path.join(tempDir, 'out.json');
@@ -241,7 +421,7 @@ describe('Submission Packaging Validator — Workstream 2', () => {
       fs.writeFileSync(transMd, '# Conversation log');
       const targetZip = path.join(tempDir, 'dist', 'submission.zip');
 
-      const packager = new SubmissionPackager(tempDir, 50, 100);
+      const packager = new SubmissionPackager(tempDir, 50, 50);
       const manifest = await packager.packageSubmission({
         outputFile: outJson,
         transcriptFile: transMd,
@@ -253,6 +433,7 @@ describe('Submission Packaging Validator — Workstream 2', () => {
       expect(manifest.dryRun).toBe(false);
       expect(fs.existsSync(targetZip)).toBe(true);
       expect(fs.statSync(targetZip).size).toBeGreaterThan(50);
+      expect(fs.statSync(targetZip).size).toBeLessThan(OFFICIAL_MAX_FILE_SIZE_BYTES);
     });
   });
 });

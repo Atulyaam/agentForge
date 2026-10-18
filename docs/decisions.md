@@ -81,6 +81,18 @@ Evidence:
 - `docs/freeze-checklist.md` published and committed with release tag `v0.1.0-s7-freeze`.
 Trade-offs / limits: Foundation is frozen for pre-kickoff rest. Live challenge adapter implementation begins at Hour 0 under Milestone S8.
 
-
-
-
+## ADR-030 — Alignment of Submission Artifact Limits with HackerRank Orchestrate Contest Rules (50 MB Uniform Ceiling)   (18 Oct 2026 18:15 IST)
+Problem: The initial packaging validator implementation defaulted the code archive limit to 100 MB while output and transcript were set to 50 MB. The official HackerRank Orchestrate instructions mandate that each of the three submitted files—code ZIP, output file, and AI chat transcript—must not exceed 50 MB.
+Decision:
+1. Align the default size limit for all three deliverables uniformly to 50 MB (`OFFICIAL_MAX_FILE_SIZE_MB = 50`, `OFFICIAL_MAX_FILE_SIZE_BYTES = 52,428,800` bytes).
+2. Enforce strict contest mode by default (`contestMode: true`). In contest mode, configurations exceeding 50 MB fail closed with `CONFIG_INVALID` to prevent accidental disqualification.
+3. Decouple output file validation from rigid JSON-only assumptions by supporting pluggable validator strategies: `json`, `jsonl`, `csv`, `text`, `any`, and custom validation functions.
+4. Execute fast pre-archive checks on standalone output and transcript artifacts prior to triggering zlib archive compression, avoiding expensive CPU cycles on invalid inputs.
+5. Provide boundary testing covering: compliant files (< 50 MB), files exactly at the limit (52,428,800 bytes), files 1 byte over the limit, and missing/unreadable files.
+Alternatives:
+- Keep 100 MB default for code zip: Rejected; creates immediate disqualification risk under official HackerRank Orchestrate submission specifications.
+- Hardcode challenge-specific JSON schema: Rejected; official brief has not yet been received. Generic format strategies support whatever tabular or structured output format the live challenge requires.
+Evidence:
+- `tests/integration/packaging.test.ts`: boundary tests confirm exact byte enforcement, pre-archive fast abort, and strategy validation.
+- `pnpm agentforge package`: generated compliant 0.21 MB archive matching all size constraints.
+Trade-offs / limits: If an unusually large code base were ever created, 50 MB could constrain assets. However, strict exclusions (`node_modules/`, `dist/`, `.next/`, `runs/`, raw datasets) ensure the clean project tree remains well under 1 MB.
