@@ -141,3 +141,72 @@ pnpm agentforge doctor
 - **Redaction by Design:** API keys are never printed in diagnostic outputs (displayed as `[CONFIGURED - REDACTED (N chars)]`).
 - **Zero API Expenditure:** Diagnostics never initiate outbound LLM provider calls.
 - **Fail-Closed:** Any failing prerequisite outputs exit code 1 with exact recovery instructions.
+
+---
+
+## 7. Authentic AI Chat Transcript Import & Vault Workflow (Workstream 1 & 2)
+
+HackerRank Orchestrate requires submitting the authentic conversation transcript from your AI coding assistant.
+
+### Strict Integrity Rules
+1. **Zero Conversation Fabrication:** Never invent, simulate, or generate artificial chat messages, timestamps, or tool calls.
+2. **Never Reconstruct from Logs:** Do not reconstruct transcripts from git history, shell logs, or run checkpoints.
+3. **Ledger vs Deliverable Distinction:** `docs/ai-transcript/INDEX.md` is strictly an audit ledger table that logs imported transcript metadata and SHA-256 hashes. **It is NOT a transcript deliverable and will be rejected if supplied as one.**
+4. **50 MB File Size Limit:** The imported transcript must not exceed 50 MB (52,428,800 bytes).
+
+### Supported Transcript Formats
+- **Markdown (`.md`):** Exported from chat interfaces (e.g. Antigravity IDE, Claude, Cursor, ChatGPT).
+- **Plain Text (`.txt`):** Plain text session dump or exported log.
+- **JSON (`.json`):** Formatted conversation message dumps.
+
+### How to Import Your Authentic Transcript
+```bash
+# 1. Export or copy your genuine AI coding session to a local file
+# Example: exported-session.md
+
+# 2. Register it into the immutable vault
+pnpm agentforge transcript add path/to/exported-session.md --source "Antigravity IDE Export"
+
+# 3. Verify vault registration and SHA-256 integrity
+pnpm agentforge doctor
+```
+
+### Manual Truthful Fallback Path
+If your coding environment lacks a one-click automated export feature:
+1. Open your AI conversation history within the tool.
+2. Select all and copy the genuine conversation text.
+3. Paste into an authentic transcript file (e.g. `genuine-ai-chat.md`) in your workspace.
+4. Run `pnpm agentforge transcript add genuine-ai-chat.md --source "Manual Workspace Copy"`.
+5. The CLI computes the SHA-256 digest, copies the file into `docs/ai-transcript/`, and records the truthful metadata in `INDEX.md`.
+
+---
+
+## 8. Final Submission Readiness Gate (`pnpm agentforge readiness` / `gate`) (Workstream 3)
+
+Run the unified readiness gate before packaging or declaring final submission readiness:
+
+```bash
+pnpm agentforge readiness
+# or alias:
+pnpm agentforge gate
+```
+
+### The Three Submission Deliverables (Strict <= 50 MB each)
+1. **Code Archive ZIP:** Monorepo source code and configurations (excluding `node_modules/`, `dist/`, `.next/`, `runs/`, `.env`, and raw datasets).
+2. **Challenge Output File:** Prediction / decision artifact matching the official challenge schema (default: `runs/drill-1-triage/output.json`).
+3. **Authentic AI Chat Transcript:** Genuine exported conversation file verified against the vault SHA-256 ledger.
+
+### Status Meaning & Fail-Closed Guard
+| Check ID | Evaluated Condition | Passing Condition | Blocking Condition |
+|---|---|---|---|
+| `repo_health` | Build files, lockfile, configs, preflight | `PASS` | `FAIL` (Missing essential repo files) |
+| `code_zip` | Project files collected, <= 50 MB | `PASS` | `FAIL` (Oversized or unexcluded files) |
+| `output_file` | Challenge output present, valid format, <= 50 MB | `PASS` | `FAIL` (Corrupt, missing, empty, or oversized) |
+| `challenge_schema` | Official challenge brief fulfilled | `PASS` | `PENDING` (Unfulfilled template prior to kickoff) |
+| `authentic_transcript` | Real exported chat registered, SHA-256 verified | `PASS` | `BLOCKED` (Missing or INDEX.md supplied) |
+| `secrets_and_limits` | 0 live secrets in codebase, all files <= 50 MB | `PASS` | `FAIL` (Secrets or oversized deliverables) |
+
+**Overall Status Guarantee:**
+- Local engineering health is `PASS` when repo, code archive, and unit tests are sound.
+- Contest submission readiness is `BLOCKED` until the genuine AI transcript is imported and the official challenge brief is fulfilled.
+- Never declare a submission `READY` when relying on mock fixtures or index files.

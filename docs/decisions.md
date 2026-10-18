@@ -96,3 +96,29 @@ Evidence:
 - `tests/integration/packaging.test.ts`: boundary tests confirm exact byte enforcement, pre-archive fast abort, and strategy validation.
 - `pnpm agentforge package`: generated compliant 0.21 MB archive matching all size constraints.
 Trade-offs / limits: If an unusually large code base were ever created, 50 MB could constrain assets. However, strict exclusions (`node_modules/`, `dist/`, `.next/`, `runs/`, raw datasets) ensure the clean project tree remains well under 1 MB.
+
+## ADR-031 — Authentic Transcript Vault, Rehearsal False-Positive Remediation, and Final Submission Gate   (18 Oct 2026 20:00 IST)
+Problem: The packaging rehearsal previously defaulted `--transcript` to `docs/ai-transcript/INDEX.md`. Because `INDEX.md` is a non-empty ledger table (~195 bytes), the validator treated it as a valid transcript file, falsely claiming `READY` status when no genuine coding-tool conversation had yet been exported or recorded.
+Decision:
+1. **Decouple Vault Ledger from Transcript Deliverables:** `docs/ai-transcript/INDEX.md` is strictly designated as an immutable ledger recording registered file hashes and source metadata. It is explicitly rejected as a transcript deliverable across packaging, CLI, and readiness gate checks.
+2. **Authentic Transcript Import (`registerAuthenticTranscript`):** Users must explicitly import real exported AI coding sessions (`pnpm agentforge transcript add <file>`). Supports Markdown, plain text, and JSON exports. Computes SHA-256 digests, stores truthful metadata, and detects on-disk tampering or corruption.
+3. **Strict Zero-Fabrication Integrity Policy:** Conversation history must never be synthetically invented, simulated, or reconstructed from git commits or runtime logs. If the coding environment lacks automated export, manual copying of real conversation history into a markdown/text file is supported and verified honestly.
+4. **Final Submission Readiness Gate (`pnpm agentforge readiness` / `gate`):** Provides a single authoritative pre-submission validator that evaluates:
+   - `repo_health` (PASS/FAIL)
+   - `code_zip` (PASS/FAIL, <= 50 MB)
+   - `output_file` (PASS/FAIL, <= 50 MB, format validated)
+   - `challenge_schema` (PASS or PENDING prior to kickoff)
+   - `authentic_transcript` (PASS or BLOCKED)
+   - `secrets_and_limits` (PASS/FAIL, <= 50 MB)
+   - `overallStatus` (READY vs BLOCKED)
+5. **Separation of Engineering Health from Submission Readiness:** A project with passing tests and valid code archive reports `engineeringHealth: PASS`, but if the genuine transcript is not yet registered or the official challenge brief is pending, `submissionReadiness` reports `BLOCKED`.
+Alternatives:
+- Generate a synthetic AI transcript to achieve green packaging: Strictly rejected; violates contest integrity and risks immediate disqualification.
+- Reconstruct chat from traces or git commit messages: Strictly rejected; dishonest and unrepresentative of genuine human-AI pairing.
+- Silently accept INDEX.md: Strictly rejected; fixes the false-positive root cause permanently.
+Evidence:
+- `tests/integration/transcript.test.ts`: 12 integration tests verifying valid transcript registration, format detection, hash mismatch/tampering, secrets rejection, and 50 MB bounds.
+- `tests/integration/packaging.test.ts`: Regression tests verifying explicit rejection of `docs/ai-transcript/INDEX.md` and fail-closed behavior.
+- `tests/integration/submission-gate.test.ts`: Integration tests verifying separation of engineering health from submission readiness.
+- `pnpm agentforge readiness`: Confirms honest reporting (`Engineering: PASS`, `Submission: BLOCKED`).
+Trade-offs / limits: Requires an explicit user export step before final packaging can succeed, which is intentional and guarantees authentic submission compliance.

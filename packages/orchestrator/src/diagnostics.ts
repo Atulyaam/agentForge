@@ -222,12 +222,20 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         detail: `Transcript vault integrity verification failed: ${corruptedFiles.join('; ')}`,
         remediation: 'Re-add untampered transcript files using "pnpm agentforge transcript add <file>". Never alter registered transcripts manually.',
       });
+    } else if (validRows === 0) {
+      checks.push({
+        id: 'transcript_vault',
+        name: 'AI Transcript Vault Integrity',
+        status: 'warning',
+        detail: 'INDEX.md is present, but 0 authentic AI chat transcripts are registered. Authentic chat export must be imported before submission.',
+        remediation: 'Export your genuine AI conversation and register it using "pnpm agentforge transcript add <file>".',
+      });
     } else {
       checks.push({
         id: 'transcript_vault',
         name: 'AI Transcript Vault Integrity',
         status: 'passed',
-        detail: `INDEX.md verified: ${validRows} transcript(s) registered with tamper-proof SHA-256 hashes matching on-disk content. Zero synthetic fabrication detected.`,
+        detail: `INDEX.md verified: ${validRows} authentic transcript(s) registered with tamper-proof SHA-256 hashes matching on-disk content. Zero synthetic fabrication detected.`,
       });
     }
   }

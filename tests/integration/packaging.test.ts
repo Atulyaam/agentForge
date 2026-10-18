@@ -436,4 +436,79 @@ describe('Submission Packaging Validator & Compliance', () => {
       expect(fs.statSync(targetZip).size).toBeLessThan(OFFICIAL_MAX_FILE_SIZE_BYTES);
     });
   });
+
+  describe('Authentic Transcript Submission Integrity & False-Positive Regressions (Workstream 2)', () => {
+    it('fails closed when docs/ai-transcript/INDEX.md is supplied as transcript (rehearsal false-positive regression)', async () => {
+      fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
+      const outJson = path.join(tempDir, 'out.json');
+      fs.writeFileSync(outJson, JSON.stringify([{ id: '1', result: 'ok' }]));
+
+      // Create INDEX.md table
+      const vaultDir = path.join(tempDir, 'docs', 'ai-transcript');
+      fs.mkdirSync(vaultDir, { recursive: true });
+      const indexMd = path.join(vaultDir, 'INDEX.md');
+      fs.writeFileSync(
+        indexMd,
+        '# AI Transcript Vault\n\n| Date | File | SHA-256 |\n|---|---|---|\n',
+      );
+
+      const packager = new SubmissionPackager(tempDir);
+      const manifest = await packager.packageSubmission({
+        outputFile: outJson,
+        transcriptFile: indexMd, // The exact false-positive scenario
+        dryRun: true,
+      });
+
+      expect(manifest.safeToPackage).toBe(false);
+      expect(manifest.artifacts.transcriptFile.validContent).toBe(false);
+      expect(
+        manifest.validationErrors.some((e) =>
+          e.includes('is a vault index ledger, not an authentic AI conversation transcript'),
+        ),
+      ).toBe(true);
+    });
+
+    it('fails closed when transcriptFile is omitted and vault contains 0 authentic transcripts', async () => {
+      fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
+      const outJson = path.join(tempDir, 'out.json');
+      fs.writeFileSync(outJson, JSON.stringify([{ id: '1', result: 'ok' }]));
+
+      // Omit transcriptFile completely and vault has no registered genuine files
+      const packager = new SubmissionPackager(tempDir);
+      const manifest = await packager.packageSubmission({
+        outputFile: outJson,
+        dryRun: true,
+      });
+
+      expect(manifest.safeToPackage).toBe(false);
+      expect(manifest.artifacts.transcriptFile.validContent).toBe(false);
+      expect(
+        manifest.validationErrors.some((e) =>
+          e.includes('No authentic AI conversation transcript registered'),
+        ),
+      ).toBe(true);
+    });
+
+    it('rejects empty or whitespace-only transcript files', async () => {
+      fs.writeFileSync(path.join(tempDir, 'package.json'), '{}');
+      const outJson = path.join(tempDir, 'out.json');
+      fs.writeFileSync(outJson, JSON.stringify([{ id: '1', result: 'ok' }]));
+
+      const emptyTranscript = path.join(tempDir, 'empty-transcript.txt');
+      fs.writeFileSync(emptyTranscript, '    \n\t   ');
+
+      const packager = new SubmissionPackager(tempDir);
+      const manifest = await packager.packageSubmission({
+        outputFile: outJson,
+        transcriptFile: emptyTranscript,
+        dryRun: true,
+      });
+
+      expect(manifest.safeToPackage).toBe(false);
+      expect(manifest.artifacts.transcriptFile.validContent).toBe(false);
+      expect(
+        manifest.validationErrors.some((e) => e.includes('empty or contains only whitespace')),
+      ).toBe(true);
+    });
+  });
 });

@@ -16,12 +16,13 @@ pnpm install
 cp .env.example .env
 
 # 2. Run full verification suite
-pnpm test          # 186 unit and integration tests across 14 test suites
+pnpm test          # 207 unit and integration tests across 16 test suites
 pnpm test:e2e      # 19 Playwright/API tests for Web Run Viewer
 pnpm typecheck     # Strict TypeScript typechecking across monorepo
 pnpm build         # Production build of all packages and web viewer
 pnpm agentforge preflight  # Pre-submit security and integrity checklist
 pnpm agentforge doctor     # Safe operator readiness diagnostics (redacted & offline)
+pnpm agentforge readiness  # Final submission readiness gate (evaluates all 3 deliverables)
 
 # 3. Execute demo workload
 pnpm agentforge run --input fixtures/demo.json --output runs/demo-out.json
@@ -90,7 +91,8 @@ apps/
 | `pnpm agentforge report <runId>` | Generate a markdown report for a run |
 | `pnpm agentforge preflight` | Run pre-submission security, lockfile, and integrity checks |
 | `pnpm agentforge doctor` | Run safe operator readiness diagnostics (redacted & offline) |
-| `pnpm agentforge transcript add <f>` | Add an immutable AI session transcript to the vault |
+| `pnpm agentforge readiness` | Run final pre-submission readiness gate across all 3 deliverables |
+| `pnpm agentforge transcript add <f>` | Register an authentic AI session transcript into the immutable vault |
 
 ---
 

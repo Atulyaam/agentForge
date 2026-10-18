@@ -602,3 +602,11 @@ export * from './packaging.js';
 // ── Operator Readiness Diagnostics (Workstream 3) ─────────────────────────────
 
 export * from './diagnostics.js';
+
+// ── Authentic AI Transcript Vault (Workstream 1 & 2) ──────────────────────────
+
+export * from './transcript.js';
+
+// ── Final Submission Readiness Gate (Workstream 3) ────────────────────────────
+
+export * from './submission-gate.js';

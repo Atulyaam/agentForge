@@ -15,6 +15,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { AgentForgeError } from '@agentforge/shared';
+import { resolveSubmissionTranscript } from './transcript.js';
 
 // ─── Constants & Limits ───────────────────────────────────────────────────────
 
@@ -233,7 +234,7 @@ export function createZipArchive(
 // ─── Secret Scanning ──────────────────────────────────────────────────────────
 
 const SECRET_PATTERNS = [
-  /sk-[a-zA-Z0-9]{20,}/,
+  /sk-[a-zA-Z0-9_-]{20,}/,
   /ghp_[a-zA-Z0-9]{20,}/,
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
@@ -242,7 +243,14 @@ const SECRET_PATTERNS = [
 export function scanBufferForSecrets(content: string, filePath: string): SecretViolation[] {
   const normPath = filePath.replace(/\\/g, '/');
   // Ignore known self-test and fixture files that test secret redaction
-  if (normPath.includes('shared/src/index.test.ts') || normPath.includes('packaging.test.ts')) {
+  if (
+    normPath.includes('shared/src/index.test.ts') ||
+    normPath.includes('packaging.test.ts') ||
+    normPath.includes('transcript.test.ts') ||
+    normPath.includes('doctor.test.ts') ||
+    normPath.includes('submission-gate.test.ts') ||
+    normPath.includes('fixtures/injection/')
+  ) {
     return [];
   }
 
@@ -355,6 +363,18 @@ export class SubmissionPackager {
 
     let validContent = true;
     let rawContent: string;
+
+    // Check for INDEX.md ledger false-positive when validating a transcript
+    if (
+      path.basename(resolvedPath).toLowerCase() === 'index.md' &&
+      name.toLowerCase().includes('transcript')
+    ) {
+      errors.push(
+        `Invalid transcript: "${path.basename(resolvedPath)}" is a vault index ledger, not an authentic AI conversation transcript. Provide the exported conversation file.`,
+      );
+      validContent = false;
+    }
+
     try {
       rawContent = fs.readFileSync(resolvedPath, 'utf8');
     } catch (err: any) {
@@ -447,6 +467,9 @@ export class SubmissionPackager {
       if (sizeBytes === 0) {
         errors.push('Artifact file is empty (0 bytes)');
         validContent = false;
+      } else if (rawContent.trim().length === 0) {
+        errors.push(`${name} is empty or contains only whitespace.`);
+        validContent = false;
       }
     }
 
@@ -521,7 +544,6 @@ export class SubmissionPackager {
   /** Execute full packaging inspection, secret scan, and optional ZIP archive generation. */
   async packageSubmission(options: PackagingOptions = {}): Promise<PackagingManifest> {
     const outputFile = options.outputFile ?? 'runs/drill-1-triage/output.json';
-    const transcriptFile = options.transcriptFile ?? 'docs/ai-transcript/INDEX.md';
     const archiveOutPath = options.archiveOutPath ?? path.join(this.rootDir, 'dist', 'submission.zip');
     const dryRun = options.dryRun ?? false;
     const excludeDatasets = options.excludeDatasets ?? true;
@@ -536,9 +558,46 @@ export class SubmissionPackager {
       validationErrors.push(...outputValidation.errors);
     }
 
-    const transcriptValidation = this.validateArtifact(transcriptFile, 'AI Session Transcript', 'any', this.maxFileSizeMb);
-    if (!transcriptValidation.validSize || !transcriptValidation.validContent || !transcriptValidation.exists) {
-      validationErrors.push(...transcriptValidation.errors);
+    // Resolve authentic transcript (NEVER default to docs/ai-transcript/INDEX.md)
+    let transcriptValidation: ArtifactValidationResult;
+    if (options.transcriptFile) {
+      transcriptValidation = this.validateArtifact(
+        options.transcriptFile,
+        'AI Session Transcript',
+        'any',
+        this.maxFileSizeMb,
+      );
+      if (!transcriptValidation.validSize || !transcriptValidation.validContent || !transcriptValidation.exists) {
+        validationErrors.push(...transcriptValidation.errors);
+      }
+    } else {
+      const vaultResolution = resolveSubmissionTranscript(undefined, this.rootDir);
+      if (!vaultResolution.resolved || !vaultResolution.transcriptPath) {
+        const errMsg = vaultResolution.errors.join('; ');
+        validationErrors.push(errMsg);
+        transcriptValidation = {
+          name: 'AI Session Transcript',
+          path: path.join(this.rootDir, 'docs', 'ai-transcript', 'MISSING_AUTHENTIC_TRANSCRIPT'),
+          exists: false,
+          sizeBytes: 0,
+          sizeMb: 0,
+          maxSizeBytes: Math.floor(this.maxFileSizeMb * 1024 * 1024),
+          maxSizeMb: this.maxFileSizeMb,
+          validSize: false,
+          validContent: false,
+          errors: vaultResolution.errors,
+        };
+      } else {
+        transcriptValidation = this.validateArtifact(
+          vaultResolution.transcriptPath,
+          'AI Session Transcript',
+          'any',
+          this.maxFileSizeMb,
+        );
+        if (!transcriptValidation.validSize || !transcriptValidation.validContent || !transcriptValidation.exists) {
+          validationErrors.push(...transcriptValidation.errors);
+        }
+      }
     }
 
     // 2. Collect candidate project files

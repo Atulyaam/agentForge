@@ -20,6 +20,8 @@ import {
   SubmissionPackager,
   OFFICIAL_MAX_FILE_SIZE_MB,
   runDiagnostics,
+  registerAuthenticTranscript,
+  checkSubmissionReadiness,
   type OutputValidatorStrategy,
 } from '@agentforge/orchestrator';
 import {
@@ -114,6 +116,7 @@ Commands:
   report         Generate a run report
   preflight      Run pre-submit checklist
   doctor         Run safe operator readiness diagnostics (Workstream 3)
+  readiness      Run final submission readiness gate (validates all 3 deliverables, 50 MB limits, and genuine transcript)
   interview-pack Generate interview readiness pack (FR-039)
   transcript     Manage AI transcript vault
 
@@ -121,7 +124,7 @@ Options for 'package':
   --dry-run             Inspect and validate without writing archive
   --output <path>       Path to output artifact (default: runs/drill-1-triage/output.json)
   --output-format <fmt> Output format: json | jsonl | csv | text | any (default: json)
-  --transcript <path>   Path to AI transcript (default: docs/ai-transcript/INDEX.md)
+  --transcript <path>   Path to authentic AI transcript (default: auto-resolved from vault; never INDEX.md)
   --archive <path>      Destination ZIP path (default: dist/submission.zip)
   --max-file-mb <N>     Maximum artifact file size in MB (default: 50, official limit)
   --max-archive-mb <N>  Maximum archive file size in MB (default: 50, official limit)
@@ -488,51 +491,81 @@ async function commandDoctor(_args: Map<string, string>): Promise<number> {
   }
 }
 
-// ─── Command: transcript add (FR-029) ─────────────────────────────────────────
+// ─── Command: transcript add (FR-029, Workstream 1) ───────────────────────────
 
 async function commandTranscriptAdd(args: Map<string, string>): Promise<number> {
   const filePath = args.get('_1'); // transcript add <file>
   if (!filePath) {
-    console.error('Error: File path required. Usage: pnpm agentforge transcript add <file>');
+    console.error('Error: File path required. Usage: pnpm agentforge transcript add <file> [--tool <name>]');
     return 1;
   }
 
   const absFile = resolveAbsPath(filePath);
-  if (!fs.existsSync(absFile)) {
-    console.error(`Error: File not found: ${absFile}`);
+  const sourceTool = args.get('tool') ?? 'AI Coding Environment Export';
+
+  try {
+    const reg = registerAuthenticTranscript(absFile, {
+      sourceTool,
+    });
+
+    console.log(`\n✅ Authentic transcript registered successfully!`);
+    console.log(`   File Name:   ${reg.fileName}`);
+    console.log(`   Format:      ${reg.format.toUpperCase()}`);
+    console.log(`   Size:        ${reg.sizeBytes} bytes (${(reg.sizeBytes / (1024 * 1024)).toFixed(3)} MB <= 50 MB)`);
+    console.log(`   SHA-256:     ${reg.sha256}`);
+    console.log(`   Vault Path:  ${reg.destinationPath}`);
+    console.log(`   Ledger:      docs/ai-transcript/INDEX.md\n`);
+    return 0;
+  } catch (error) {
+    if (error instanceof AgentForgeError) {
+      console.error(`\n❌ Failed to register transcript: ${error.safeMessage}`);
+    } else {
+      console.error(`\n❌ Failed to register transcript: ${error instanceof Error ? error.message : String(error)}`);
+    }
     return 1;
   }
+}
 
-  const vaultDir = path.join(process.cwd(), 'docs', 'ai-transcript');
-  fs.mkdirSync(vaultDir, { recursive: true });
+// ─── Command: readiness / gate (Workstream 3 Final Gate) ──────────────────────
 
-  // Copy file to vault
-  const fileName = path.basename(absFile);
-  const destPath = path.join(vaultDir, fileName);
-  fs.copyFileSync(absFile, destPath);
+async function commandReadiness(args: Map<string, string>): Promise<number> {
+  const outputFile = args.get('output');
+  const transcriptFile = args.get('transcript');
+  const outputFormat = (args.get('output-format') ?? 'json') as OutputValidatorStrategy;
 
-  // Compute SHA-256
-  const content = fs.readFileSync(absFile);
-  const hash = crypto.createHash('sha256').update(content).digest('hex');
+  console.log('\n🛡️ AgentForge Final Submission Readiness Gate (Workstream 3)\n');
+  const report = await checkSubmissionReadiness({
+    outputFile,
+    transcriptFile,
+    outputFormat,
+  });
 
-  // Update INDEX.md
-  const indexPath = path.join(vaultDir, 'INDEX.md');
-  const timestamp = new Date().toISOString();
-  const entry = `| ${timestamp} | ${fileName} | ${hash} |\n`;
+  for (const check of report.checks) {
+    let icon = '✅';
+    if (check.status === 'FAIL') icon = '❌';
+    else if (check.status === 'BLOCKED') icon = '🛑';
+    else if (check.status === 'PENDING') icon = '⏳';
 
-  if (!fs.existsSync(indexPath)) {
-    fs.writeFileSync(
-      indexPath,
-      `# AI Transcript Vault\n\n| Date | File | SHA-256 |\n|---|---|---|\n${entry}`,
-    );
-  } else {
-    fs.appendFileSync(indexPath, entry);
+    console.log(`  ${icon} [${check.status}] ${check.name}`);
+    console.log(`     ${check.detail}`);
+    if (check.remediation) {
+      console.log(`     👉 Remediation: ${check.remediation}`);
+    }
+    console.log('');
   }
 
-  console.log(`✅ Transcript added: ${fileName}`);
-  console.log(`   SHA-256: ${hash}`);
-  console.log(`   Saved to: ${destPath}`);
-  return 0;
+  console.log('═══════════════════════════════════════════════════════════════════════════════');
+  console.log(`  OVERALL SUBMISSION STATUS: ${report.overallStatus}`);
+  console.log(`  Local Engineering Health:   ${report.engineeringHealth}`);
+  console.log(`  Contest Deliverables:       ${report.submissionReadiness}`);
+  console.log('═══════════════════════════════════════════════════════════════════════════════');
+  console.log(`\n${report.summary}\n`);
+
+  if (report.overallStatus === 'READY') {
+    return 0;
+  } else {
+    return 1;
+  }
 }
 
 // ─── Command: diff (FR-040) ──────────────────────────────────────────────────
@@ -732,7 +765,7 @@ async function commandDrill(args: Map<string, string>): Promise<number> {
 async function commandPackage(args: Map<string, string>): Promise<number> {
   const rootDir = process.cwd();
   const outputFile = args.get('output') ?? 'runs/drill-1-triage/output.json';
-  const transcriptFile = args.get('transcript') ?? 'docs/ai-transcript/INDEX.md';
+  const transcriptFile = args.get('transcript');
   const archiveOutPath = args.get('archive') ?? path.join(rootDir, 'dist', 'submission.zip');
   const dryRun = args.has('dry-run');
   const excludeDatasets = !args.has('include-datasets');
@@ -746,7 +779,7 @@ async function commandPackage(args: Map<string, string>): Promise<number> {
   console.log(`   Contest Mode:     ${contestMode ? 'ENFORCED (Strict <= 50 MB ceiling)' : 'RELAXED'}`);
   console.log(`   Output Format:    ${outputFormat}`);
   console.log(`   Output File:      ${outputFile}`);
-  console.log(`   Transcript File:  ${transcriptFile}`);
+  console.log(`   Transcript File:  ${transcriptFile ?? '(auto-resolving authentic transcript from vault)'}`);
   console.log(`   Target ZIP:       ${archiveOutPath}`);
   console.log(`   Size Limits:      Artifact <= ${maxFileSizeMb}MB, Archive <= ${maxArchiveSizeMb}MB (50 MB HackerRank limit)\n`);
 
@@ -770,7 +803,7 @@ async function commandPackage(args: Map<string, string>): Promise<number> {
   console.log('─── Deliverables Validation ──────────────────────────────');
   console.log(`  Code Archive:   ${manifest.artifacts.codeArchive.validSize ? '✅' : '❌'} ${manifest.artifacts.codeArchive.name} (${manifest.artifacts.codeArchive.sizeMb} MB)`);
   console.log(`  Output File:    ${manifest.artifacts.outputFile.validContent && manifest.artifacts.outputFile.validSize ? '✅' : '❌'} ${path.basename(outputFile)} (${manifest.artifacts.outputFile.sizeMb} MB)`);
-  console.log(`  AI Transcript:  ${manifest.artifacts.transcriptFile.validContent && manifest.artifacts.transcriptFile.validSize ? '✅' : '❌'} ${path.basename(transcriptFile)} (${manifest.artifacts.transcriptFile.sizeMb} MB)`);
+  console.log(`  AI Transcript:  ${manifest.artifacts.transcriptFile.validContent && manifest.artifacts.transcriptFile.validSize ? '✅' : '❌'} ${path.basename(manifest.artifacts.transcriptFile.path)} (${manifest.artifacts.transcriptFile.sizeMb} MB)`);
 
   console.log('\n─── Archive Content Summary ──────────────────────────────');
   console.log(`  Included Files: ${manifest.archiveDetails.includedFilesCount} files (${(manifest.archiveDetails.totalUncompressedBytes / (1024 * 1024)).toFixed(2)} MB uncompressed)`);
@@ -857,6 +890,11 @@ async function main(): Promise<void> {
         break;
       case 'doctor':
         exitCode = await commandDoctor(parsedArgs);
+        break;
+      case 'readiness':
+      case 'gate':
+      case 'submission-gate':
+        exitCode = await commandReadiness(parsedArgs);
         break;
       case 'transcript':
         if (parsedArgs.get('_0') === 'add') {

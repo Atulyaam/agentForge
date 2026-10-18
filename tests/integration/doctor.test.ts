@@ -205,7 +205,7 @@ describe('Safe Operator Readiness Diagnostics — Workstream 3', () => {
 
       const vaultCheck = report.checks.find((c) => c.id === 'transcript_vault');
       expect(vaultCheck?.status).toBe('passed');
-      expect(vaultCheck?.detail).toContain('1 transcript(s) registered with tamper-proof SHA-256 hashes');
+      expect(vaultCheck?.detail).toContain('1 authentic transcript(s) registered with tamper-proof SHA-256 hashes');
       expect(vaultCheck?.detail).toContain('Zero synthetic fabrication detected');
     });
 
