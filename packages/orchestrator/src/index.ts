@@ -610,3 +610,8 @@ export * from './transcript.js';
 // ── Final Submission Readiness Gate (Workstream 3) ────────────────────────────
 
 export * from './submission-gate.js';
+
+// ── Live Provider Validation & Calibration (Workstreams 1 & 2) ───────────────
+
+export * from './provider-smoke.js';
+export * from './calibration.js';

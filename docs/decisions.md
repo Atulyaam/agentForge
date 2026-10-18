@@ -122,3 +122,22 @@ Evidence:
 - `tests/integration/submission-gate.test.ts`: Integration tests verifying separation of engineering health from submission readiness.
 - `pnpm agentforge readiness`: Confirms honest reporting (`Engineering: PASS`, `Submission: BLOCKED`).
 Trade-offs / limits: Requires an explicit user export step before final packaging can succeed, which is intentional and guarantees authentic submission compliance.
+
+## ADR-032 — Live Provider Validation, Control-Plane Budget Enforcement, and Operational Calibration Engine   (18 Oct 2026 21:00 IST)
+Problem: While AgentForge possessed robust deterministic MockLLMProvider and synthetic challenge drills, real frontier model connectivity and compatibility remained unverified. Uncontrolled live testing could accidentally make network calls during CI, incur unexpected costs, leak API keys into test logs, or claim false benchmark generalization from tiny samples.
+Decision:
+1. **Explicit Live Opt-In (`--live`):** All live provider interaction requires explicit operator opt-in via `--live`. Without this flag or if credentials (`LLM_API_KEY`) are missing, all commands return `PENDING` with actionable instructions. Zero live network calls are made during CI, default test runs, or local builds.
+2. **Native Provider Adapter (`LiveHttpLLMProvider`):** Implemented directly over native Node `fetch` with `AbortController` timeouts (default: 30s), OpenAI-compatible chat completion format, and zero heavy SDK dependencies.
+3. **Control-Plane BudgetGuard Enforcement:** Strict invocation ceilings are enforced at the control-plane level before requests are dispatched (`--max-calls 1` for smoke tests, `--max-calls 3` per adapter for calibration).
+4. **Structured Probe Smoke Test (`pnpm agentforge provider-smoke`):** Issues a single request validating adherence to `SmokeProbeSchema`, reporting configuration validity, latency, schema conformance, and provider-reported tokens while redacting keys and auth headers.
+5. **Bounded Real-Model Calibration (`pnpm agentforge calibrate`):** Runs bounded samples (default 3 records per adapter) against existing `support-triage` and `policy-rag` adapters. Evaluates outputs independently against separately stored ground truth without ever leaking labels to prompts. Missing token metrics are reported as `'unavailable'`.
+6. **Separation of Evidence in Submission Gate:** Evaluates independent dimensions (`repo_health`, `mock_regression`, `live_smoke`, `live_calibration`, `challenge_schema`, `authentic_transcript`). Passing local unit tests does not establish live provider readiness, and small-sample calibration is explicitly disclaimed as not a general benchmark.
+Alternatives:
+- Include live API keys in CI/repo secrets: Strictly rejected; violates zero-leakage security constraints.
+- Use heavy vendor SDKs (e.g., openai, @langchain): Rejected; adds dependency bloat and vendor lock-in.
+- Infer token counts or monetary cost from character length: Strictly rejected; dishonest metric estimation.
+Evidence:
+- `packages/llm/src/live-provider.test.ts`: 5 unit tests verifying OpenAI format, token extraction, 401 redaction, 429 rate limit, and timeout.
+- `tests/integration/provider-validation.test.ts`: 7 integration tests verifying offline `PENDING` states, missing credential handling, mock execution, isolated ground truth, and non-overwriting of canonical drill reports.
+- `pnpm agentforge provider-smoke` & `pnpm agentforge calibrate`: return clean `PENDING` states offline and compliant outputs with mock providers.
+Trade-offs / limits: Live tests remain `PENDING` until the operator sets a real `LLM_API_KEY`. Calibration on small samples provides operational sanity checking, not statistical benchmark validation.

@@ -249,6 +249,8 @@ export function scanBufferForSecrets(content: string, filePath: string): SecretV
     normPath.includes('transcript.test.ts') ||
     normPath.includes('doctor.test.ts') ||
     normPath.includes('submission-gate.test.ts') ||
+    normPath.includes('live-provider.test.ts') ||
+    normPath.includes('provider-validation.test.ts') ||
     normPath.includes('fixtures/injection/')
   ) {
     return [];

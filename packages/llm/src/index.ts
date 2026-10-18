@@ -247,3 +247,7 @@ export class LLMAdapter {
     return this.budget.count;
   }
 }
+
+// ─── Live Provider Adapter (Workstream 1) ─────────────────────────────────────
+
+export * from './live-provider.js';

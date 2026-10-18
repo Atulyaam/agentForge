@@ -22,6 +22,8 @@ import {
   runDiagnostics,
   registerAuthenticTranscript,
   checkSubmissionReadiness,
+  runProviderSmokeTest,
+  runModelCalibration,
   type OutputValidatorStrategy,
 } from '@agentforge/orchestrator';
 import {
@@ -47,6 +49,33 @@ import {
 } from '@agentforge/adapter-kit';
 import { DemoAdapter } from './demo-adapter.js';
 import { runDrill1Triage, runDrill2Rag } from './drills/drill-runner.js';
+
+// ─── Environment Loader ───────────────────────────────────────────────────────
+
+function loadDotEnv(rootDir = process.cwd()): void {
+  const envPath = path.join(rootDir, '.env');
+  if (!fs.existsSync(envPath)) return;
+  try {
+    const raw = fs.readFileSync(envPath, 'utf8');
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (process.env[key] === undefined && val !== '') {
+          process.env[key] = val;
+        }
+      }
+    }
+  } catch {}
+}
+
+loadDotEnv();
 
 // ─── Register adapters ───────────────────────────────────────────────────────
 
@@ -117,8 +146,20 @@ Commands:
   preflight      Run pre-submit checklist
   doctor         Run safe operator readiness diagnostics (Workstream 3)
   readiness      Run final submission readiness gate (validates all 3 deliverables, 50 MB limits, and genuine transcript)
+  provider-smoke Run safe opt-in live provider smoke test (--live --max-calls 1)
+  calibrate      Run bounded real-model calibration on existing adapters (--live --sample 3)
   interview-pack Generate interview readiness pack (FR-039)
   transcript     Manage AI transcript vault
+
+Options for 'provider-smoke':
+  --live                Explicit consent required to initiate live provider network calls
+  --max-calls <N>       Hard limit on model requests (default: 1)
+
+Options for 'calibrate':
+  --live                Explicit consent required to initiate live provider network calls
+  --sample <N>          Sample size per adapter (default: 3)
+  --max-calls <N>       Hard budget limit per adapter (default: 3)
+  --adapter <id>        Target adapter: all | support-triage | policy-rag (default: all)
 
 Options for 'package':
   --dry-run             Inspect and validate without writing archive
@@ -555,9 +596,12 @@ async function commandReadiness(args: Map<string, string>): Promise<number> {
   }
 
   console.log('═══════════════════════════════════════════════════════════════════════════════');
-  console.log(`  OVERALL SUBMISSION STATUS: ${report.overallStatus}`);
-  console.log(`  Local Engineering Health:   ${report.engineeringHealth}`);
-  console.log(`  Contest Deliverables:       ${report.submissionReadiness}`);
+  console.log(`  OVERALL SUBMISSION STATUS:   ${report.overallStatus}`);
+  console.log(`  Local Engineering Health:     ${report.engineeringHealth}`);
+  console.log(`  Mock Regression Suite:        ${report.mockRegression}`);
+  console.log(`  Live Provider Smoke Test:     ${report.liveProviderSmoke}`);
+  console.log(`  Real-Model Calibration:       ${report.realModelCalibration}`);
+  console.log(`  Contest Deliverables:         ${report.submissionReadiness}`);
   console.log('═══════════════════════════════════════════════════════════════════════════════');
   console.log(`\n${report.summary}\n`);
 
@@ -566,6 +610,107 @@ async function commandReadiness(args: Map<string, string>): Promise<number> {
   } else {
     return 1;
   }
+}
+
+// ─── Command: provider-smoke (Workstream 1) ──────────────────────────────────
+
+async function commandProviderSmoke(args: Map<string, string>): Promise<number> {
+  const live = args.get('live') === 'true';
+  const maxCalls = args.get('max-calls') ? Number(args.get('max-calls')) : 1;
+
+  console.log('\n⚡ AgentForge Live Provider Smoke Test (Workstream 1)\n');
+  if (!live) {
+    console.log('  Mode: OFFLINE INSPECTION (Pass --live to perform actual network call)\n');
+  } else {
+    console.log(`  Mode: LIVE OPT-IN (Enforced Call Limit: ${maxCalls})\n`);
+  }
+
+  const result = await runProviderSmokeTest({
+    live,
+    maxCalls,
+  });
+
+  let icon = '✅';
+  if (result.status === 'FAILED') icon = '❌';
+  else if (result.status === 'PENDING') icon = '⏳';
+
+  console.log(`  ${icon} [${result.status}] Live Provider Smoke Test`);
+  console.log(`     Model:         ${result.modelId}`);
+  console.log(`     Config Valid:  ${result.configValid ? 'Yes' : 'No'}`);
+  if (result.latencyMs !== undefined) {
+    console.log(`     Latency:       ${result.latencyMs}ms`);
+  }
+  if (result.usage) {
+    const inTokens = result.usage.inputTokens !== undefined ? result.usage.inputTokens : 'unavailable';
+    const outTokens = result.usage.outputTokens !== undefined ? result.usage.outputTokens : 'unavailable';
+    console.log(`     Token Usage:   input=${inTokens}, output=${outTokens}`);
+  }
+  console.log(`     Details:       ${result.message}`);
+  if (result.remediation) {
+    console.log(`     👉 Remediation: ${result.remediation}`);
+  }
+  if (result.reportPath) {
+    console.log(`     Report:        ${result.reportPath}`);
+  }
+  console.log('');
+
+  if (result.status === 'FAILED') {
+    return 1;
+  }
+  return 0;
+}
+
+// ─── Command: calibrate (Workstream 2) ───────────────────────────────────────
+
+async function commandCalibrate(args: Map<string, string>): Promise<number> {
+  const live = args.get('live') === 'true';
+  const sample = args.get('sample') ? Number(args.get('sample')) : 3;
+  const maxCalls = args.get('max-calls') ? Number(args.get('max-calls')) : sample;
+  const adapterId = (args.get('adapter') as any) ?? 'all';
+
+  console.log('\n🎯 AgentForge Real-Model Calibration (Workstream 2)\n');
+  if (!live) {
+    console.log('  Mode: OFFLINE INSPECTION (Pass --live to perform actual calibration calls)\n');
+  } else {
+    console.log(`  Mode: LIVE CALIBRATION (Sample: ${sample} records, Call Ceiling: ${maxCalls} calls per adapter)\n`);
+  }
+
+  const result = await runModelCalibration({
+    live,
+    sampleSize: sample,
+    maxCalls,
+    adapterId,
+  });
+
+  let icon = '✅';
+  if (result.status === 'FAILED') icon = '❌';
+  else if (result.status === 'PENDING') icon = '⏳';
+
+  console.log(`  ${icon} [${result.status}] Real-Model Calibration`);
+  console.log(`     Model:        ${result.modelId}`);
+  console.log(`     Sample Size:  ${result.sampleSize} records per adapter`);
+  console.log(`     Adapters:     ${result.adaptersEvaluated.length > 0 ? result.adaptersEvaluated.join(', ') : 'None'}`);
+  console.log(`     Details:      ${result.message}`);
+  if (result.remediation) {
+    console.log(`     👉 Remediation: ${result.remediation}`);
+  }
+
+  if (result.status === 'COMPLETED') {
+    console.log('\n  Measured Metrics Summary:');
+    for (const [id, m] of Object.entries(result.metrics)) {
+      const accStr = typeof m.accuracy === 'number' ? `${(m.accuracy * 100).toFixed(1)}%` : m.accuracy;
+      console.log(`    - [${id}]: Schema Valid: ${(m.schemaValidityRate * 100).toFixed(0)}%, Accuracy: ${accStr}, Avg Latency: ${m.avgLatencyMs}ms`);
+    }
+    if (result.markdownReportPath) {
+      console.log(`\n  📄 Calibration Report saved to: ${result.markdownReportPath}`);
+    }
+  }
+  console.log('');
+
+  if (result.status === 'FAILED') {
+    return 1;
+  }
+  return 0;
 }
 
 // ─── Command: diff (FR-040) ──────────────────────────────────────────────────
@@ -895,6 +1040,14 @@ async function main(): Promise<void> {
       case 'gate':
       case 'submission-gate':
         exitCode = await commandReadiness(parsedArgs);
+        break;
+      case 'provider-smoke':
+      case 'smoke':
+        exitCode = await commandProviderSmoke(parsedArgs);
+        break;
+      case 'calibrate':
+      case 'calibration':
+        exitCode = await commandCalibrate(parsedArgs);
         break;
       case 'transcript':
         if (parsedArgs.get('_0') === 'add') {

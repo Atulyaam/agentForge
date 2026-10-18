@@ -16,13 +16,15 @@ pnpm install
 cp .env.example .env
 
 # 2. Run full verification suite
-pnpm test          # 207 unit and integration tests across 16 test suites
+pnpm test          # 219 unit and integration tests across 18 test suites
 pnpm test:e2e      # 19 Playwright/API tests for Web Run Viewer
 pnpm typecheck     # Strict TypeScript typechecking across monorepo
 pnpm build         # Production build of all packages and web viewer
 pnpm agentforge preflight  # Pre-submit security and integrity checklist
 pnpm agentforge doctor     # Safe operator readiness diagnostics (redacted & offline)
-pnpm agentforge readiness  # Final submission readiness gate (evaluates all 3 deliverables)
+pnpm agentforge readiness  # Final submission readiness gate (evaluates all deliverables)
+pnpm agentforge provider-smoke --live # Live provider probe (strictly opt-in, offline by default)
+pnpm agentforge calibrate --live      # Bounded real-model calibration (strictly opt-in)
 
 # 3. Execute demo workload
 pnpm agentforge run --input fixtures/demo.json --output runs/demo-out.json
@@ -91,7 +93,9 @@ apps/
 | `pnpm agentforge report <runId>` | Generate a markdown report for a run |
 | `pnpm agentforge preflight` | Run pre-submission security, lockfile, and integrity checks |
 | `pnpm agentforge doctor` | Run safe operator readiness diagnostics (redacted & offline) |
-| `pnpm agentforge readiness` | Run final pre-submission readiness gate across all 3 deliverables |
+| `pnpm agentforge readiness` | Run final pre-submission readiness gate across all deliverables |
+| `pnpm agentforge provider-smoke [--live]` | Execute single-call live provider probe (safe schema, redacted, offline by default) |
+| `pnpm agentforge calibrate [--live]` | Execute bounded real-model calibration against triage & RAG adapters |
 | `pnpm agentforge transcript add <f>` | Register an authentic AI session transcript into the immutable vault |
 
 ---

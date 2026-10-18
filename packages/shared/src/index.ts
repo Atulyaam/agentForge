@@ -153,8 +153,8 @@ export const DEFAULTS = {
 
 /** Patterns that indicate a secret value — used for redaction. */
 const SECRET_PATTERNS = [
-  /sk-[a-zA-Z0-9]{20,}/g,
-  /key-[a-zA-Z0-9]{20,}/g,
+  /sk-[a-zA-Z0-9_-]{20,}/g,
+  /key-[a-zA-Z0-9_-]{20,}/g,
   /Bearer\s+[a-zA-Z0-9._-]+/g,
   /password\s*[:=]\s*\S+/gi,
   /secret\s*[:=]\s*\S+/gi,

@@ -142,6 +142,22 @@ pnpm agentforge doctor
 - **Zero API Expenditure:** Diagnostics never initiate outbound LLM provider calls.
 - **Fail-Closed:** Any failing prerequisite outputs exit code 1 with exact recovery instructions.
 
+### 6.1 Live Provider Smoke Test & Calibration (Opt-In)
+
+Live frontier provider connectivity is strictly opt-in and offline by default. When valid provider credentials are configured:
+
+```bash
+# Smoke test (exactly 1 call, zero automatic retries, BudgetGuard enforced)
+pnpm agentforge provider-smoke --live --max-calls 1
+
+# Bounded calibration (3 records per adapter, evaluated against isolated ground truth)
+pnpm agentforge calibrate --live --sample 3 --max-calls 6
+```
+
+- Returns `PENDING` if `--live` is omitted or if `LLM_API_KEY` is missing/mock.
+- Evaluates against isolated ground truth without leaking labels into prompts.
+- Persists reports to `runs/smoke/smoke-report.json` and `docs/calibration-report.md`.
+
 ---
 
 ## 7. Authentic AI Chat Transcript Import & Vault Workflow (Workstream 1 & 2)
