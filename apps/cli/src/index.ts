@@ -19,6 +19,7 @@ import {
   executeRun,
   SubmissionPackager,
   OFFICIAL_MAX_FILE_SIZE_MB,
+  runDiagnostics,
   type OutputValidatorStrategy,
 } from '@agentforge/orchestrator';
 import {
@@ -112,6 +113,7 @@ Commands:
   validate       Validate output against schema
   report         Generate a run report
   preflight      Run pre-submit checklist
+  doctor         Run safe operator readiness diagnostics (Workstream 3)
   interview-pack Generate interview readiness pack (FR-039)
   transcript     Manage AI transcript vault
 
@@ -453,6 +455,35 @@ async function commandPreflight(): Promise<number> {
     return 0;
   } else {
     console.log('❌ Some preflight checks failed.\n');
+    return 1;
+  }
+}
+
+// ─── Command: doctor (Workstream 3 Operator Diagnostics) ──────────────────────
+
+async function commandDoctor(_args: Map<string, string>): Promise<number> {
+  console.log('\n🩺 AgentForge Operator Readiness Diagnostics (Workstream 3)\n');
+  const report = await runDiagnostics();
+
+  for (const check of report.checks) {
+    let icon = '✅';
+    if (check.status === 'failed') icon = '❌';
+    else if (check.status === 'warning') icon = '⚠️ ';
+    else if (check.status === 'pending') icon = '⏳';
+
+    console.log(`  ${icon} [${check.status.toUpperCase()}] ${check.name}`);
+    console.log(`     ${check.detail}`);
+    if (check.remediation) {
+      console.log(`     👉 Remediation: ${check.remediation}`);
+    }
+    console.log('');
+  }
+
+  if (report.allPassed) {
+    console.log('✅ Operator readiness diagnostics PASSED. System is verified and ready.\n');
+    return 0;
+  } else {
+    console.error('❌ Operator readiness diagnostics FAILED. Please remediate issues above.\n');
     return 1;
   }
 }
@@ -823,6 +854,9 @@ async function main(): Promise<void> {
         break;
       case 'preflight':
         exitCode = await commandPreflight();
+        break;
+      case 'doctor':
+        exitCode = await commandDoctor(parsedArgs);
         break;
       case 'transcript':
         if (parsedArgs.get('_0') === 'add') {

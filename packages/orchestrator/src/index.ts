@@ -598,3 +598,7 @@ export function cancelRun(ctx: RunContext): void {
 // ── Packaging & Submission Validator (Workstream 2) ───────────────────────────
 
 export * from './packaging.js';
+
+// ── Operator Readiness Diagnostics (Workstream 3) ─────────────────────────────
+
+export * from './diagnostics.js';

@@ -114,3 +114,30 @@ Input Workload Size: N = ______ records
    Example: (100 / 4) * 15s * 2 = 750 seconds (12.5 minutes)
    Config setting: BATCH_MAX_DURATION_SECONDS=3600
 ```
+
+---
+
+## 6. Safe Operator Readiness Diagnostics (`pnpm agentforge doctor`)
+
+Before kicking off live workloads or assembling contest deliverables, run the non-destructive operator diagnostic:
+
+```bash
+pnpm agentforge doctor
+```
+
+### Diagnostic Checks & Failure Meanings
+
+| Check ID | Verified Condition | Failure Meaning | Actionable Remediation |
+|---|---|---|---|
+| `config_schema` | Zod schema parse over `process.env` (LLM_API_KEY, LLM_MODEL, timeouts) | Missing required variables or non-positive bounds. Values are **always redacted**. | Set `LLM_API_KEY` and `LLM_MODEL` in `.env`. For offline testing, set `LLM_API_KEY=mock-key` and `LLM_MODEL=mock-model`. |
+| `provider_model` | Provider configuration & model compatibility | Invalid model string or missing keys. Live models report `PENDING_KICKOFF` to protect token costs. | Check model name formatting in `.env`. Confirm live connectivity only during kickoff. |
+| `budgets_and_guards` | Usable limits (`MAX_RUN_DURATION_SECONDS > 0`, `MAX_TRANSIENT_RETRIES >= 0`, `MAX_INPUT_CHARS > 0`) | Zero, negative, or invalid operational bounds. | Ensure timeout >= 1s, retries >= 0, and input chars > 0 in configuration. |
+| `directory_writability` | Write and delete probes in `runs/` and `docs/ai-transcript/` | Read-only filesystem or restricted process permissions. | Run `chmod +w` or grant write permissions to `runs/` and `docs/ai-transcript/`. |
+| `transcript_vault` | `docs/ai-transcript/INDEX.md` integrity and on-disk SHA-256 match | File tampering or missing registered transcript files. Synthetic fabrication strictly forbidden. | Re-add untampered transcript exports using `pnpm agentforge transcript add <file>`. Never edit registered transcripts manually. |
+| `packaging_limits` | Uniform 50 MB limit retention (`OFFICIAL_MAX_FILE_SIZE_MB = 50`) | Limit improperly altered beyond HackerRank ceiling. | Keep `OFFICIAL_MAX_FILE_SIZE_MB = 50` in `packages/orchestrator/src/packaging.ts`. |
+| `optional_services` | Background service status (Inline vs Redis/BullMQ) | `JOB_RUNNER=bullmq` specified without a valid `REDIS_URL`. | Switch to `JOB_RUNNER=inline` (monorepo default) or provide a reachable `REDIS_URL`. |
+
+### Security Guarantees
+- **Redaction by Design:** API keys are never printed in diagnostic outputs (displayed as `[CONFIGURED - REDACTED (N chars)]`).
+- **Zero API Expenditure:** Diagnostics never initiate outbound LLM provider calls.
+- **Fail-Closed:** Any failing prerequisite outputs exit code 1 with exact recovery instructions.
