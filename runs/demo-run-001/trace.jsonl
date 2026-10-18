@@ -1,0 +1,14 @@
+{"runId":"demo-run-001","sequence":0,"type":"status_change","payload":{"from":"queued","to":"running"},"timestamp":"2026-10-16T12:00:00.100Z"}
+{"runId":"demo-run-001","sequence":1,"type":"run_started","payload":{"runId":"demo-run-001","adapterId":"demo-sentiment"},"timestamp":"2026-10-16T12:00:00.110Z"}
+{"runId":"demo-run-001","sequence":2,"type":"input_parsed","payload":{"recordCount":5,"recordErrors":0},"timestamp":"2026-10-16T12:00:00.150Z"}
+{"runId":"demo-run-001","sequence":3,"type":"record_processed","payload":{"recordId":"demo-001","status":"passed"},"timestamp":"2026-10-16T12:00:00.400Z"}
+{"runId":"demo-run-001","sequence":4,"type":"decision_made","payload":{"recordId":"demo-001","sentiment":"positive","confidence":0.85},"timestamp":"2026-10-16T12:00:00.410Z"}
+{"runId":"demo-run-001","sequence":5,"type":"record_processed","payload":{"recordId":"demo-002","status":"passed"},"timestamp":"2026-10-16T12:00:00.600Z"}
+{"runId":"demo-run-001","sequence":6,"type":"decision_made","payload":{"recordId":"demo-002","sentiment":"negative","confidence":0.9},"timestamp":"2026-10-16T12:00:00.610Z"}
+{"runId":"demo-run-001","sequence":7,"type":"record_processed","payload":{"recordId":"demo-003","status":"passed"},"timestamp":"2026-10-16T12:00:00.800Z"}
+{"runId":"demo-run-001","sequence":8,"type":"record_processed","payload":{"recordId":"demo-004","status":"passed"},"timestamp":"2026-10-16T12:00:01.000Z"}
+{"runId":"demo-run-001","sequence":9,"type":"record_processed","payload":{"recordId":"demo-005","status":"passed"},"timestamp":"2026-10-16T12:00:01.200Z"}
+{"runId":"demo-run-001","sequence":10,"type":"output_validated","payload":{"recordCount":5},"timestamp":"2026-10-16T12:00:01.300Z"}
+{"runId":"demo-run-001","sequence":11,"type":"output_written","payload":{"path":"runs/demo-run-001/output.json"},"timestamp":"2026-10-16T12:00:01.400Z"}
+{"runId":"demo-run-001","sequence":12,"type":"status_change","payload":{"from":"running","to":"succeeded"},"timestamp":"2026-10-16T12:00:01.450Z"}
+{"runId":"demo-run-001","sequence":13,"type":"run_finished","payload":{"status":"succeeded"},"timestamp":"2026-10-16T12:00:01.500Z"}

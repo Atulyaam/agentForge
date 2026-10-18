@@ -121,7 +121,8 @@ export class MockLLMProvider implements LLMProvider {
     if (typeof handler === 'function') {
       try {
         content = (handler as any)(options.userPrompt);
-      } catch {
+      } catch (err) {
+        if (err instanceof AgentForgeError) throw err;
         content = (handler as any)(options);
       }
     } else {

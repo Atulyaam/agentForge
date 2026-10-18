@@ -1,0 +1,19 @@
+{
+  "id": "demo-run-002",
+  "status": "failed",
+  "adapterId": "demo-sentiment",
+  "inputHash": "x9y8z7w6v5u4t3s2",
+  "configSnapshot": {
+    "NODE_ENV": "development",
+    "LLM_MODEL": "mock-model",
+    "JOB_RUNNER": "inline",
+    "MAX_TRANSIENT_RETRIES": 2,
+    "CACHE_ENABLED": false
+  },
+  "codeVersion": "abc1234",
+  "errorCategory": "LLM_TIMEOUT",
+  "errorMessage": "LLM call timed out after 30000ms",
+  "createdAt": "2026-10-16T13:00:00.000Z",
+  "startedAt": "2026-10-16T13:00:00.100Z",
+  "finishedAt": "2026-10-16T13:00:32.000Z"
+}

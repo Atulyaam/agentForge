@@ -1,0 +1,5 @@
+{"runId":"demo-run-003","sequence":0,"type":"status_change","payload":{"from":"queued","to":"running"},"timestamp":"2026-10-16T13:10:00.100Z"}
+{"runId":"demo-run-003","sequence":1,"type":"run_started","payload":{"runId":"demo-run-003","adapterId":"demo-sentiment"},"timestamp":"2026-10-16T13:10:00.150Z"}
+{"runId":"demo-run-003","sequence":2,"type":"input_parsed","payload":{"recordCount":10,"recordErrors":0},"timestamp":"2026-10-16T13:10:00.200Z"}
+{"runId":"demo-run-003","sequence":3,"type":"record_processed","payload":{"recordId":"demo-301","status":"passed"},"timestamp":"2026-10-16T13:10:00.800Z"}
+{"runId":"demo-run-003","sequence":4,"type":"record_processed","payload":{"recordId":"demo-302","status":"passed"},"timestamp":"2026-10-16T13:10:01.400Z"}

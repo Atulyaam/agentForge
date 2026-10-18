@@ -10,15 +10,19 @@
  * - FR-UI-010: Artifact download (run-scoped artifacts, traversal blocked)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { GET as getRuns } from '../../apps/web/src/app/api/runs/route';
 import { GET as getRunDetail } from '../../apps/web/src/app/api/runs/[runId]/route';
 import { GET as getRunEvents } from '../../apps/web/src/app/api/runs/[runId]/events/route';
 import { GET as getRunArtifact } from '../../apps/web/src/app/api/runs/[runId]/artifacts/[filename]/route';
 import { STATUS_META, getStatusMeta } from '../../apps/web/src/lib/status-meta';
 import { RUN_STATUSES } from '@agentforge/shared';
+import { ensureDemoRunsExist } from '../../apps/web/src/lib/test-fixtures';
 
 describe('S4: T1-lite Web Run Viewer E2E Flow (G2-lite)', () => {
+  beforeAll(() => {
+    ensureDemoRunsExist();
+  });
   describe('Status Vocabulary & Mapping (FR-UI-002)', () => {
     it('all RUN_STATUSES from shared taxonomy map to distinct UI labels', () => {
       for (const status of RUN_STATUSES) {

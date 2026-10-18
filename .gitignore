@@ -1,6 +1,9 @@
 node_modules/
 dist/
-/runs/
+/runs/*
+!/runs/demo-run-001/
+!/runs/demo-run-002/
+!/runs/demo-run-003/
 .env
 .env.local
 *.tsbuildinfo

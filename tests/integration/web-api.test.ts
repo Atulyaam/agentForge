@@ -1,12 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { GET as getRuns } from '../../apps/web/src/app/api/runs/route';
 import { GET as getRunDetail } from '../../apps/web/src/app/api/runs/[runId]/route';
 import { GET as getRunEvents } from '../../apps/web/src/app/api/runs/[runId]/events/route';
 import { GET as getRunArtifact } from '../../apps/web/src/app/api/runs/[runId]/artifacts/[filename]/route';
 import { GET as getHealthLive } from '../../apps/web/src/app/api/health/live/route';
 import { GET as getHealthReady } from '../../apps/web/src/app/api/health/ready/route';
+import { ensureDemoRunsExist } from '../../apps/web/src/lib/test-fixtures';
 
 describe('Web API Route Handlers (T1-lite)', () => {
+  beforeAll(() => {
+    ensureDemoRunsExist();
+  });
   describe('GET /api/runs', () => {
     it('returns a list of runs including demo runs', async () => {
       const response = await getRuns();

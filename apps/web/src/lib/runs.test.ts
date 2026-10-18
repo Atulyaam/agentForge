@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import {
   listRuns,
   getRunDetails,
@@ -7,8 +7,12 @@ import {
   validateRunId,
   validateArtifactName,
 } from './runs';
+import { ensureDemoRunsExist } from './test-fixtures';
 
 describe('Runs Loader (T1-lite)', () => {
+  beforeAll(() => {
+    ensureDemoRunsExist();
+  });
   describe('Security validation', () => {
     it('rejects path traversal in runId', () => {
       expect(validateRunId('../evil')).toBe(false);

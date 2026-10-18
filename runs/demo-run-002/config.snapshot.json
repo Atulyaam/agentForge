@@ -1,0 +1,10 @@
+{
+  "NODE_ENV": "development",
+  "LLM_MODEL": "mock-model",
+  "JOB_RUNNER": "inline",
+  "MAX_TRANSIENT_RETRIES": 2,
+  "MAX_SCHEMA_CORRECTIONS": 1,
+  "MAX_REPAIR_ATTEMPTS": 2,
+  "MAX_RUN_DURATION_SECONDS": 900,
+  "CACHE_ENABLED": false
+}

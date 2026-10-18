@@ -1,0 +1,7 @@
+[
+  { "id": "demo-001", "text": "I love this product! It exceeded all my expectations.", "sentiment": "positive", "confidence": 0.85 },
+  { "id": "demo-002", "text": "The service was terrible and the staff was rude.", "sentiment": "negative", "confidence": 0.9 },
+  { "id": "demo-003", "text": "The meeting is scheduled for 3 PM tomorrow.", "sentiment": "neutral", "confidence": 0.75 },
+  { "id": "demo-004", "text": "This is the best experience I have ever had!", "sentiment": "positive", "confidence": 0.92 },
+  { "id": "demo-005", "text": "I am very disappointed with the quality.", "sentiment": "negative", "confidence": 0.88 }
+]

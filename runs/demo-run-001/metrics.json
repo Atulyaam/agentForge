@@ -1,0 +1,8 @@
+{
+  "totalRecords": 5,
+  "succeededRecords": 5,
+  "failedRecords": 0,
+  "blockedRecords": 0,
+  "totalDurationMs": 1400,
+  "llmCalls": 5
+}

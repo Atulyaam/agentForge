@@ -1,0 +1,9 @@
+{"runId":"demo-run-002","sequence":0,"type":"status_change","payload":{"from":"queued","to":"running"},"timestamp":"2026-10-16T13:00:00.100Z"}
+{"runId":"demo-run-002","sequence":1,"type":"run_started","payload":{"runId":"demo-run-002","adapterId":"demo-sentiment"},"timestamp":"2026-10-16T13:00:00.110Z"}
+{"runId":"demo-run-002","sequence":2,"type":"input_parsed","payload":{"recordCount":3,"recordErrors":0},"timestamp":"2026-10-16T13:00:00.200Z"}
+{"runId":"demo-run-002","sequence":3,"type":"record_processed","payload":{"recordId":"rec-001","status":"passed"},"timestamp":"2026-10-16T13:00:01.000Z"}
+{"runId":"demo-run-002","sequence":4,"type":"record_error","payload":{"recordId":"rec-002","category":"LLM_TIMEOUT","message":"LLM call timed out after 30000ms"},"timestamp":"2026-10-16T13:00:31.000Z"}
+{"runId":"demo-run-002","sequence":5,"type":"record_retry_failed","payload":{"recordId":"rec-002","attempt":2},"timestamp":"2026-10-16T13:00:31.500Z"}
+{"runId":"demo-run-002","sequence":6,"type":"run_error","payload":{"category":"LLM_TIMEOUT","message":"LLM call timed out after 30000ms"},"timestamp":"2026-10-16T13:00:31.900Z"}
+{"runId":"demo-run-002","sequence":7,"type":"status_change","payload":{"from":"running","to":"failed"},"timestamp":"2026-10-16T13:00:31.950Z"}
+{"runId":"demo-run-002","sequence":8,"type":"run_finished","payload":{"status":"failed"},"timestamp":"2026-10-16T13:00:32.000Z"}

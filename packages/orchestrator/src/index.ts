@@ -69,13 +69,14 @@ export interface OrchestratorOptions {
 
 // ─── Checkpoint (FR-033) ──────────────────────────────────────────────────────
 
-interface CheckpointEntry {
+export interface CheckpointEntry {
   recordId: string;
   status: CheckStatus;
   outputHash: string;
+  output?: unknown;
 }
 
-function loadCheckpoint(checkpointPath: string): Map<string, CheckpointEntry> {
+export function loadCheckpoint(checkpointPath: string): Map<string, CheckpointEntry> {
   const entries = new Map<string, CheckpointEntry>();
   if (!fs.existsSync(checkpointPath)) return entries;
 
@@ -92,7 +93,7 @@ function loadCheckpoint(checkpointPath: string): Map<string, CheckpointEntry> {
   return entries;
 }
 
-function appendCheckpoint(checkpointPath: string, entry: CheckpointEntry): void {
+export function appendCheckpoint(checkpointPath: string, entry: CheckpointEntry): void {
   fs.appendFileSync(checkpointPath, JSON.stringify(entry) + '\n');
 }
 
@@ -268,6 +269,25 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
       ? loadCheckpoint(path.join(runsDir, options.resumeId, 'checkpoint.jsonl'))
       : new Map<string, CheckpointEntry>();
 
+    // Load previously written outputs on resume if available
+    if (options.resumeId) {
+      const prevOutputPath = path.join(runsDir, options.resumeId, 'output.json');
+      if (fs.existsSync(prevOutputPath)) {
+        try {
+          const prevOutputs = JSON.parse(fs.readFileSync(prevOutputPath, 'utf-8'));
+          if (Array.isArray(prevOutputs)) {
+            for (const out of prevOutputs) {
+              const recId = adapter.recordId(out);
+              if (recId && checkpoint.has(recId)) {
+                const entry = checkpoint.get(recId)!;
+                if (!entry.output) entry.output = out;
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
     if (options.dryRun) {
       // Dry-run mode: validates input and wiring without calling LLM (FR-037)
       emitEvent(ctx, 'dry_run_started', { recordCount: recordsToProcess.length });
@@ -327,9 +347,11 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
         const existing = checkpoint.get(recordId);
         if (existing && existing.status === 'passed') {
           emitEvent(ctx, 'record_skipped', { recordId, reason: 'resume' });
+          appendCheckpoint(checkpointPath, existing);
           return {
             recordId,
             status: 'passed',
+            output: existing.output,
             evidenceRefs: ['checkpoint_resume'],
             attempts: 0,
             durationMs: 0,
@@ -427,6 +449,7 @@ export async function executeRun(options: OrchestratorOptions): Promise<RunConte
           outputHash: recordOutput
             ? crypto.createHash('sha256').update(JSON.stringify(recordOutput)).digest('hex').substring(0, 16)
             : '',
+          output: recordOutput,
         });
 
         ctx.stages.push({
