@@ -10,3 +10,11 @@ dist/
 coverage/
 .turbo/
 .next/
+
+# Python rules
+__pycache__/
+*.py[cod]
+*$py.class
+*.tmp
+.DS_Store
+Thumbs.db
