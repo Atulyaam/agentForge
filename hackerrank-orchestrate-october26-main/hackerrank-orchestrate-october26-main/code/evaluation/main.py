@@ -143,8 +143,40 @@ def run_custom_cases():
     assert res_3['deletion_status'] == 'COMPLETE'
     assert all(s['phase'] == 'VERIFICATION' for s in res_3['steps_json'])
 
-    print("ALL CUSTOM EVALUATION TEST CASES PASSED!")
+    # 4. Custom Case 4: Read replica nested search and audit record extraction
+    case_custom_4 = {
+        'case_id': 'custom_04',
+        'email': 'diya.k4436@outlook.com',
+        'requested_at': '2026-09-05T11:00:00Z',
+        'reported_status': 'COMPLETE',
+        'reported_at': '2026-09-07T11:00:00Z',
+        'audit_at': '2026-09-26T11:00:00Z',
+        'request_text': 'Please delete my account and ensure search indexes no longer return my name.'
+    }
+    res_4 = pipeline.audit_case(case_custom_4)
+    print(f"Custom Case 4 (Read Replica Extraction): status={res_4['deletion_status']}, steps_count={len(res_4['steps_json'])}")
+    assert res_4['deletion_status'] == 'INCOMPLETE'
+    assert any(s['resource_id'] == 'search_1007' and s['operation'] == 'REPORT_REMAINING_RECORD' for s in res_4['steps_json'])
+    assert any(s['resource_id'] == 'audit_record_9528' and s['state'] == 'PRESENT' for s in res_4['steps_json'])
+
+    # 5. Custom Case 5: Direct evidence account resolution precedence
+    case_custom_5 = {
+        'case_id': 'custom_05',
+        'email': 'thandiwe.n@gmail.com', # user_04 seed user mapping
+        'requested_at': '2026-08-25T12:32:00Z',
+        'reported_status': 'COMPLETE',
+        'reported_at': '2026-08-27T08:54:00Z',
+        'audit_at': '2026-09-07T10:20:00Z',
+        'request_text': 'I am deleting my account. Keep anonymous stats, but nothing pointing back to me.'
+    }
+    res_5 = pipeline.audit_case(case_custom_5)
+    print(f"Custom Case 5 (Evidence/Seed Account Resolution): status={res_5['deletion_status']}, steps_count={len(res_5['steps_json'])}")
+    assert res_5['deletion_status'] == 'COMPLETE'
+    assert any(s['resource_id'] == 'account_004' and s['system_id'] == 'account_service' for s in res_5['steps_json'])
+
+    print("ALL CUSTOM EVALUATION TEST CASES PASSED (5/5)!")
 
 if __name__ == '__main__':
     evaluate_samples()
     run_custom_cases()
+
