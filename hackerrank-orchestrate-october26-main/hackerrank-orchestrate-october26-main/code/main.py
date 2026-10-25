@@ -11,7 +11,13 @@ import sys
 import csv
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
 
 # Ensure utf-8 encoding for standard outputs
 if hasattr(sys.stdout, 'reconfigure'):
@@ -93,7 +99,7 @@ class EvidenceIndexer:
             for r in csv.DictReader(f):
                 self.manifest[r['file_id']] = r
 
-    def add_rec(self, ev_id, system_id, resource_id, kind, state, idents, details=None):
+    def add_rec(self, ev_id, system_id, resource_id, kind, state, idents, details=None, captured_at_override=None):
         if not resource_id or not system_id:
             return
         norm_idents = set()
@@ -103,9 +109,10 @@ class EvidenceIndexer:
                 if item_str and item_str.lower() != 'none' and item_str.lower() != 'null':
                     norm_idents.add(item_str.lower())
         ev_info = self.manifest.get(ev_id, {})
+        cap_t = captured_at_override if captured_at_override else ev_info.get('captured_at')
         self.all_records.append({
             'evidence_id': ev_id,
-            'captured_at': ev_info.get('captured_at'),
+            'captured_at': cap_t,
             'system_id': system_id,
             'resource_id': resource_id,
             'kind': kind,
@@ -117,7 +124,54 @@ class EvidenceIndexer:
     def index_all(self):
         self._index_all_evidence_files()
         self._index_trace_correlated_logs()
+        self._index_data_catalog_links()
         return self.all_records
+
+    def _index_data_catalog_links(self):
+        act_path = os.path.join(self.dataset_dir, "system_activity.csv")
+        if not os.path.exists(act_path):
+            return
+        kind_map = {
+            'search_service': ('REMAINING_RECORD', 'PRESENT'),
+            'integration_service': ('ACTIVE_DATA_FLOW', 'ACTIVE'),
+            'analytics_platform': ('EXPOSED_PII', 'PRESENT'),
+            'support_platform': ('EXPOSED_PII', 'PRESENT'),
+            'backup_service': ('RESTORE_RISK', 'ACTIVE'),
+            'export_service': ('REMAINING_RECORD', 'PRESENT'),
+            'account_service': ('REMAINING_RECORD', 'PRESENT'),
+            'security_service': ('RETAINED_RECORD', 'PRESENT'),
+            'identity_service': ('REDACTED_RECORD', 'REDACTED'),
+            'object_storage': ('REMAINING_RECORD', 'PRESENT'),
+            'marketing_platform': ('REMAINING_RECORD', 'PRESENT'),
+        }
+        try:
+            with open(act_path, 'r', encoding='utf-8') as f:
+                for a in csv.DictReader(f):
+                    if a.get('event_type') == 'LINK_RESOURCE_IDENTITY':
+                        svc = a.get('target_system')
+                        res = a.get('resource_id')
+                        ev_t = parse_iso(a.get('event_time'))
+                        details = a.get('details', '')
+                        m_em = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', details)
+                        m_uid = re.findall(r'(user_\d+)', details)
+                        idents = set(m_em + m_uid)
+
+                        best_ev_id = None
+                        best_diff = 999999
+                        for fid, ef in self.manifest.items():
+                            cap_t = parse_iso(ef['captured_at'])
+                            diff = abs((ev_t - cap_t).total_seconds())
+                            if diff < best_diff and diff <= 3600:
+                                best_diff = diff
+                                best_ev_id = fid
+
+                        if best_ev_id and svc in kind_map:
+                            kind, state = kind_map[svc]
+                            cap_t = parse_iso(self.manifest[best_ev_id]['captured_at'])
+                            eff_time = max(cap_t, ev_t).isoformat()
+                            self.add_rec(best_ev_id, svc, res, kind, state, idents, captured_at_override=eff_time)
+        except Exception:
+            pass
 
     def _index_all_evidence_files(self):
         # 1. service_resource_export (11 JSON files)
@@ -455,7 +509,33 @@ class EvidenceIndexer:
         # 9. support_replica.log (evidence_61)
         for ev_id, ef in self.manifest.items():
             if ef['file_path'].endswith('support_replica.log'):
-                self.add_rec(ev_id, 'support_platform', 'support_002', 'REMAINING_RECORD', 'PRESENT', {'customer4104@yahoo.com', 'user_10', 'nadia.ionescu@yahoo.com', 'n.petrescu@yahoo.com'})
+                fpath = os.path.join(self.repo_root, "dataset", ef['file_path'])
+                traces = {}
+                try:
+                    with open(fpath, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            kv = {}
+                            for m in re.finditer(r'([a-zA-Z_0-9]+)=([^\s]+)', line):
+                                kv[m.group(1)] = m.group(2).strip('"')
+                            tid = kv.get('trace_id')
+                            if tid:
+                                if tid not in traces: traces[tid] = {}
+                                traces[tid].update(kv)
+                            else:
+                                res_id = kv.get('resource_id')
+                                lkey = kv.get('lookup_key')
+                                if res_id and lkey and kv.get('rows') == '1':
+                                    self.add_rec(ev_id, 'support_platform', res_id, 'REMAINING_RECORD', 'PRESENT', {lkey})
+                    for tid, tkv in traces.items():
+                        res_id = tkv.get('resource_id')
+                        lkey = tkv.get('lookup_key')
+                        if res_id and lkey:
+                            rows = tkv.get('rows', '')
+                            mf = tkv.get('marker_found', '')
+                            if rows == '1' or mf == 'false':
+                                self.add_rec(ev_id, 'support_platform', res_id, 'REMAINING_RECORD', 'PRESENT', {lkey})
+                except Exception:
+                    continue
 
         # 10. customer_analytics_report_20260907.json (evidence_56)
         for ev_id, ef in self.manifest.items():
@@ -465,14 +545,50 @@ class EvidenceIndexer:
                     with open(fpath, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     for r in data.get('records', []):
-                        self.add_rec(ev_id, 'analytics_platform', r.get('resource_id'), 'ANONYMIZED_RECORD', 'ANONYMIZED', {'user_04', 'thandiwe.n@gmail.com'})
+                        res_id = r.get('resource_id')
+                        raw_idents = {r.get('user_id'), r.get('email'), r.get('phone'), r.get('email_hash')}
+                        clean_idents = {str(x).lower() for x in raw_idents if x and str(x).lower() not in ('none', 'null')}
+                        if clean_idents:
+                            self.add_rec(ev_id, 'analytics_platform', res_id, 'EXPOSED_PII', 'PRESENT', clean_idents)
+                        else:
+                            self.add_rec(ev_id, 'analytics_platform', res_id, 'ANONYMIZED_RECORD', 'ANONYMIZED', set())
                 except Exception:
                     continue
 
-        # 11. PDFs: evidence_58, 18, 27, 55
-        self.add_rec('evidence_58', 'support_platform', 'support_001', 'REMAINING_RECORD', 'PRESENT', {'priya.raman@gmail.com', 'user_07', 'priya raman'})
-        self.add_rec('evidence_18', 'account_service', 'account_history_18', 'REMAINING_RECORD', 'PRESENT', {'ingrid.dahl@outlook.com', 'user_18'})
-        self.add_rec('evidence_55', 'security_service', 'audit_record_003', 'RETAINED_RECORD', 'PRESENT', {'user_03', 'oliver-bennett@gmail.com'})
+        # 11. Dynamic PDF Parsing
+        for ev_id, ef in self.manifest.items():
+            if ef.get('file_path', '').lower().endswith('.pdf'):
+                fpath = os.path.join(self.repo_root, "dataset", ef['file_path'])
+                if not os.path.exists(fpath):
+                    continue
+                try:
+                    if PdfReader is not None:
+                        reader = PdfReader(fpath)
+                        txt = ''.join([page.extract_text() or '' for page in reader.pages])
+                    else:
+                        txt = ''
+                    fname = os.path.basename(ef['file_path']).lower()
+                    if 'delivery_correction' in fname:
+                        m_res = re.search(r"support_(\d+)", txt)
+                        if not m_res:
+                            continue
+                        res_id = f"support_{m_res.group(1)}"
+                        m_em = re.search(r"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", txt)
+                        m_ph = re.search(r"(\+\d[\d\s]+)", txt)
+                        idents = set()
+                        if m_em: idents.add(m_em.group(1).lower())
+                        if m_ph: idents.add(m_ph.group(1).strip())
+                        self.add_rec(ev_id, 'support_platform', res_id, 'REMAINING_RECORD', 'PRESENT', idents)
+                    elif 'security_retention' in fname:
+                        m_res = re.search(r"audit_record_(\d+)", txt)
+                        if not m_res:
+                            continue
+                        res_id = f"audit_record_{m_res.group(1)}"
+                        m_uid = re.search(r"(user_\d+)", txt)
+                        idents = {m_uid.group(1)} if m_uid else set()
+                        self.add_rec(ev_id, 'security_service', res_id, 'RETAINED_RECORD', 'PRESENT', idents)
+                except Exception:
+                    continue
 
         # 12. central_observability_export logs (12 files)
         for ev_id, ef in self.manifest.items():
@@ -736,10 +852,106 @@ class AuditPipeline:
         self.identity_resolver = IdentityResolver(repo_root)
         self.evidence_records = self.indexer.index_all()
         self._load_activities()
+        self.req_to_account = {}
+        self.req_to_analytics = {}
+        for req_fname in ("sample_deletion_requests.csv", "deletion_requests.csv"):
+            rfpath = os.path.join(self.dataset_dir, req_fname)
+            if os.path.exists(rfpath):
+                self.load_request_batches(rfpath)
+        self.account_snaps = []
+        allowed_origins = (
+            'customer_data_inventory_capture',
+            'customer_account_failover_replica_capture',
+            'customer_data_reporting_replica_capture',
+            'customer_data_regional_replicas_capture',
+            'records_assurance_snapshot_bundle',
+            'service_resource_export',
+            'customer_account_service'
+        )
+        for fid, ef in self.indexer.manifest.items():
+            if ef.get('origin') in allowed_origins:
+                self.account_snaps.append((parse_iso(ef['captured_at']), fid))
+        self.account_snaps.sort(key=lambda x: x[0])
 
     def _load_activities(self):
         with open(os.path.join(self.dataset_dir, "system_activity.csv"), 'r', encoding='utf-8') as f:
             self.activities = list(csv.DictReader(f))
+
+    def load_request_batches(self, req_path):
+        with open(req_path, 'r', encoding='utf-8') as f:
+            reqs = list(csv.DictReader(f))
+        
+        by_rep = {}
+        for r in reqs:
+            by_rep.setdefault(r['reported_at'], []).append(r)
+            
+        for rep, r_list in by_rep.items():
+            rep_dt = parse_iso(rep)
+            
+            # Account deletions in [rep_dt - 7200, rep_dt]
+            acc_acts = []
+            for a in self.activities:
+                if a['source_system'] == 'deletion_worker' and a['target_system'] == 'account_service' and a['event_type'] == 'DELETE_RECORD':
+                    ev_t = parse_iso(a['event_time'])
+                    if 0 <= (rep_dt - ev_t).total_seconds() <= 7200:
+                        acc_acts.append(a)
+            acc_acts.sort(key=lambda a: parse_iso(a['event_time']))
+            
+            # Analytics anonymizations in [rep_dt - 3600, rep_dt]
+            ana_acts = []
+            for a in self.activities:
+                if a['source_system'] == 'deletion_worker' and a['target_system'] == 'analytics_platform' and a['event_type'] == 'ANONYMIZE_RECORD' and a['reported_result'] == 'SUCCESS':
+                    ev_t = parse_iso(a['event_time'])
+                    if 0 <= (rep_dt - ev_t).total_seconds() <= 3600:
+                        ana_acts.append(a)
+            ana_acts.sort(key=lambda a: parse_iso(a['event_time']))
+            
+            r_sorted = sorted(r_list, key=lambda r: (int(r['case_id'].split('_')[1]) if '_' in r['case_id'] and r['case_id'].split('_')[1].isdigit() else r['case_id']))
+            
+            # Helper to check if request has violations
+            def req_has_violations(r_obj):
+                u_info = self.identity_resolver.resolve(r_obj['email'].lower())
+                m_idents = set()
+                if u_info['user_id']: m_idents.add(u_info['user_id'].lower())
+                m_idents.update(u_info['emails'])
+                m_idents.update(u_info['email_hashes'])
+                m_idents.update(u_info['phones'])
+                m_idents.update(u_info['names'])
+                r_at = parse_iso(r_obj['requested_at'])
+                a_at = parse_iso(r_obj['audit_at'])
+                for ev in self.evidence_records:
+                    if parse_iso(ev['captured_at']) <= a_at:
+                        if ev['kind'] in ('REMAINING_RECORD', 'EXPOSED_PII', 'ACTIVE_DATA_FLOW', 'RESTORE_RISK'):
+                            if parse_iso(ev['captured_at']) >= r_at - timedelta(seconds=60):
+                                if ev['identifiers'] & m_idents:
+                                    return True
+                return False
+
+            res_map = {'COMPLETE': 'SUCCESS', 'PARTIALLY_COMPLETE': 'PARTIAL', 'NOT_STARTED': 'FAILED'}
+            used_acc_ids = set()
+            for r in r_sorted:
+                exp_res = res_map.get(r['reported_status'])
+                cand = None
+                for a in acc_acts:
+                    if a['activity_id'] not in used_acc_ids and a['reported_result'] == exp_res:
+                        cand = a
+                        break
+                if cand:
+                    used_acc_ids.add(cand['activity_id'])
+                    self.req_to_account[r['case_id']] = cand['resource_id']
+                    
+            used_ana_ids = set()
+            for r in r_sorted:
+                if req_has_violations(r):
+                    continue
+                cand = None
+                for a in ana_acts:
+                    if a['activity_id'] not in used_ana_ids:
+                        cand = a
+                        break
+                if cand:
+                    used_ana_ids.add(cand['activity_id'])
+                    self.req_to_analytics[r['case_id']] = cand['resource_id']
 
     def audit_case(self, req):
         case_id = req['case_id']
@@ -767,7 +979,20 @@ class AuditPipeline:
         match_idents.update(u_info['phones'])
         match_idents.update(u_info['names'])
 
-        # 2. Match Primary Account
+        # 2. Correlate worker-anonymized analytics resources for this request
+        worker_anonymized_analytics = set()
+        if case_id in getattr(self, 'req_to_analytics', {}):
+            worker_anonymized_analytics.add(self.req_to_analytics[case_id])
+        else:
+            for a in self.activities:
+                if a['source_system'] == 'deletion_worker' and a['target_system'] == 'analytics_platform' and a['event_type'] == 'ANONYMIZE_RECORD':
+                    ev_t = parse_iso(a['event_time'])
+                    if ev_t <= audit_at:
+                        diff = (rep_at - ev_t).total_seconds()
+                        if 0 <= diff <= 900:
+                            worker_anonymized_analytics.add(a['resource_id'])
+
+        # Match Primary Account
         primary_account = None
 
         # Stage 1: Check evidence records captured <= audit_at for this user's account_service
@@ -777,37 +1002,40 @@ class AuditPipeline:
                     primary_account = r['resource_id']
                     break
 
-        # Stage 2: Canonical mapping for seed users user_01 through user_10
-        if not primary_account and uid and uid.startswith('user_'):
-            num_str = uid[5:]
-            if num_str.isdigit() and int(num_str) <= 10:
-                primary_account = f"account_{int(num_str):03d}"
-
-        # Stage 3: Correlate with deletion_worker activity for account_service
+        # Stage 2: Batch correlation or single correlation
         if not primary_account:
-            res_map = {'COMPLETE': 'SUCCESS', 'PARTIALLY_COMPLETE': 'PARTIAL', 'NOT_STARTED': 'FAILED'}
-            exp_res = res_map.get(req.get('reported_status'))
-            del_candidates = []
-            for a in self.activities:
-                if a['source_system'] == 'deletion_worker' and a['target_system'] == 'account_service' and a['event_type'] == 'DELETE_RECORD':
-                    ev_t = parse_iso(a['event_time'])
-                    if ev_t <= audit_at:
-                        diff = (rep_at - ev_t).total_seconds()
-                        if -60 <= diff <= 7200:
-                            if (ev_t - req_at).total_seconds() >= -60:
+            if case_id in getattr(self, 'req_to_account', {}):
+                primary_account = self.req_to_account[case_id]
+            else:
+                res_map = {'COMPLETE': 'SUCCESS', 'PARTIALLY_COMPLETE': 'PARTIAL', 'NOT_STARTED': 'FAILED'}
+                exp_res = res_map.get(req.get('reported_status'))
+                del_candidates = []
+                for a in self.activities:
+                    if a['source_system'] == 'deletion_worker' and a['target_system'] == 'account_service' and a['event_type'] == 'DELETE_RECORD':
+                        ev_t = parse_iso(a['event_time'])
+                        if ev_t <= audit_at:
+                            diff = abs((rep_at - ev_t).total_seconds())
+                            if diff <= 7200 and (ev_t - req_at).total_seconds() >= -60:
                                 res_match = (a['reported_result'] == exp_res)
-                                del_candidates.append((0 if res_match else 1, abs(diff), a['resource_id']))
-            if del_candidates:
-                del_candidates.sort(key=lambda x: (x[0], x[1]))
-                primary_account = del_candidates[0][2]
+                                del_candidates.append((0 if res_match else 1, diff, a['resource_id']))
+                if del_candidates:
+                    del_candidates.sort(key=lambda x: (x[0], x[1]))
+                    primary_account = del_candidates[0][2]
 
         # 3. Filter master records for this user captured <= audit_at
         user_ev_records = []
         for r in self.evidence_records:
-            if parse_iso(r['captured_at']) <= audit_at:
+            cap_t = parse_iso(r['captured_at'])
+            if cap_t <= audit_at:
+                # Key fix: Violations must be captured >= req_at - 60s
+                if r['kind'] in ('REMAINING_RECORD', 'EXPOSED_PII', 'ACTIVE_DATA_FLOW', 'RESTORE_RISK'):
+                    if cap_t < req_at - timedelta(seconds=60):
+                        continue
                 if r['identifiers'] & match_idents:
                     user_ev_records.append(r)
                 elif primary_account and r['resource_id'] == primary_account:
+                    user_ev_records.append(r)
+                elif r['system_id'] == 'analytics_platform' and r['resource_id'] in worker_anonymized_analytics:
                     user_ev_records.append(r)
 
         # Group user evidence by resource_id
@@ -868,9 +1096,18 @@ class AuditPipeline:
                 if not any(v['resource_id'] == primary_account for v in verifications):
                     verifications.append({'phase': 'VERIFICATION', 'system_id': 'account_service', 'resource_id': primary_account, 'operation': 'VERIFY_RECORD_ABSENT', 'state': 'ABSENT', 'evidence_id': ''})
             
+            sec_record_id = None
             for res_id, r in res_to_rec.items():
                 if r['kind'] == 'RETAINED_RECORD':
-                    verifications.append({'phase': 'VERIFICATION', 'system_id': 'security_service', 'resource_id': res_id, 'operation': 'VERIFY_RECORD_PRESENT', 'state': 'PRESENT', 'evidence_id': ''})
+                    sec_record_id = res_id
+                    break
+            if not sec_record_id:
+                for r in self.evidence_records:
+                    if r['kind'] == 'RETAINED_RECORD' and (r['identifiers'] & match_idents):
+                        sec_record_id = r['resource_id']
+                        break
+            if sec_record_id:
+                verifications.append({'phase': 'VERIFICATION', 'system_id': 'security_service', 'resource_id': sec_record_id, 'operation': 'VERIFY_RECORD_PRESENT', 'state': 'PRESENT', 'evidence_id': ''})
 
             steps = sort_steps(findings + remediations + verifications)
         else:
@@ -894,7 +1131,14 @@ class AuditPipeline:
                     comp_verif.append({'phase': 'VERIFICATION', 'system_id': svc, 'resource_id': res_id, 'operation': 'VERIFY_RESTORE_BLOCKED', 'state': 'BLOCKED', 'evidence_id': ev_id})
 
             if primary_account and not any(v['resource_id'] == primary_account for v in comp_verif):
-                comp_verif.append({'phase': 'VERIFICATION', 'system_id': 'account_service', 'resource_id': primary_account, 'operation': 'VERIFY_RECORD_ABSENT', 'state': 'ABSENT', 'evidence_id': 'evidence_54'})
+                best_snap = None
+                for cap_t, fid in self.account_snaps:
+                    if cap_t <= audit_at:
+                        best_snap = fid
+                    else:
+                        break
+                if best_snap:
+                    comp_verif.append({'phase': 'VERIFICATION', 'system_id': 'account_service', 'resource_id': primary_account, 'operation': 'VERIFY_RECORD_ABSENT', 'state': 'ABSENT', 'evidence_id': best_snap})
 
             steps = sort_steps(comp_verif)
 
@@ -910,6 +1154,7 @@ class AuditPipeline:
         if not output_csv:
             output_csv = os.path.join(self.repo_root, "output.csv")
 
+        self.load_request_batches(input_csv)
         print(f"Reading requests from: {input_csv}")
         with open(input_csv, 'r', encoding='utf-8') as f:
             requests = list(csv.DictReader(f))

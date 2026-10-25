@@ -31,10 +31,23 @@ Your solution must:
 - Generate one prediction row for every request in `dataset/deletion_requests.csv`
 - Write the final predictions to `output.csv` in the repository root
 
-Run the starter Python entry point with:
+Run the Python entry point and evaluation suite with:
 
 ```bash
-python3 code/main.py
+# Install dependencies
+pip install pypdf
+
+# 1. Run public sample benchmark evaluation and custom regression cases
+python code/evaluation/main.py
+
+# 2. Run full 518-case production audit pipeline to generate output.csv
+python code/main.py
+
+# 3. Validate output schema and structural contract
+python code/evaluation/validate_output.py
+
+# 4. Validate independent temporal and evidence grounding
+python code/evaluation/validate_evidence_grounding.py
 ```
 
 The blank template at `dataset/output.csv` is provided as a reference. Your final generated file for submission must be the root-level `output.csv`.
