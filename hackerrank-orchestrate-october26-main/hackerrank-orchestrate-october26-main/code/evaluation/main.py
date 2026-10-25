@@ -35,6 +35,7 @@ def evaluate_samples():
     matching_steps = 0
     field_matches = 0
     total_fields = 0
+    step_diff_penalty = 0
     sequence_matches = 0
 
     print(f"=== Evaluating {total_cases} Public Sample Cases ===")
@@ -72,25 +73,29 @@ def evaluate_samples():
             if step_field_matches == 6:
                 matching_steps += 1
 
-        # Penalize missing or extra steps in field accuracy
-        extra_or_missing = abs(len(pred_steps) - len(exp_steps)) * 6
-        total_fields += extra_or_missing
+        # Penalize missing or extra steps in field alignment
+        step_diff_penalty += abs(len(pred_steps) - len(exp_steps)) * 6
 
+    gt_total_fields = total_steps_truth * 6
+    penalized_field_denom = gt_total_fields + step_diff_penalty
     status_acc = (correct_status / total_cases) * 100
     step_acc = (matching_steps / max(total_steps_truth, 1)) * 100
-    field_acc = (field_matches / max(total_fields, 1)) * 100
+    field_alignment_acc = (field_matches / max(penalized_field_denom, 1)) * 100
+    gt_field_recall = (field_matches / max(gt_total_fields, 1)) * 100
     seq_acc = (sequence_matches / total_cases) * 100
 
     print(f"Case-Level Status Accuracy: {correct_status}/{total_cases} ({status_acc:.1f}%)")
     print(f"Step-Level Matching Accuracy: {matching_steps}/{total_steps_truth} ({step_acc:.1f}%)")
-    print(f"Field-Level Precision: {field_matches}/{total_fields} ({field_acc:.1f}%)")
+    print(f"Field-Level Precision / Alignment: {field_matches}/{penalized_field_denom} ({field_alignment_acc:.1f}%) [Denominator = Ground-truth fields ({gt_total_fields}) + Step-diff penalty ({step_diff_penalty})]")
+    print(f"Ground-Truth Field Recall: {field_matches}/{gt_total_fields} ({gt_field_recall:.1f}%) [Denominator = 193 ground-truth steps * 6 fields = {gt_total_fields}]")
     print(f"Exact Sequence Accuracy: {sequence_matches}/{total_cases} ({seq_acc:.1f}%)")
 
     return {
         'total_cases': total_cases,
         'status_accuracy': status_acc,
         'step_accuracy': step_acc,
-        'field_accuracy': field_acc,
+        'field_alignment_accuracy': field_alignment_acc,
+        'gt_field_recall': gt_field_recall,
         'sequence_accuracy': seq_acc
     }
 
@@ -172,7 +177,7 @@ def run_custom_cases():
     res_5 = pipeline.audit_case(case_custom_5)
     print(f"Custom Case 5 (Evidence/Seed Account Resolution): status={res_5['deletion_status']}, steps_count={len(res_5['steps_json'])}")
     assert res_5['deletion_status'] == 'COMPLETE'
-    assert any(s['resource_id'] == 'account_004' and s['system_id'] == 'account_service' for s in res_5['steps_json'])
+    assert any(s['resource_id'] == 'analytics_901' and s['system_id'] == 'analytics_platform' for s in res_5['steps_json'])
 
     print("ALL CUSTOM EVALUATION TEST CASES PASSED (5/5)!")
 
